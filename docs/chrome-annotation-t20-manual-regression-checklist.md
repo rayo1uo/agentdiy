@@ -33,7 +33,7 @@
 - [ ] 安全响应头已返回（`X-Frame-Options`、`CSP` 等）。
 
 ## 6. 发布前检查
-- [ ] extension 构建通过：`npm --prefix extension run build`
-- [ ] 后端测试通过：`go test ./...`
+- [x] extension 构建通过：`npm --prefix extension run build`
+- [x] 后端测试通过：`go test ./...`
 - [ ] 商店文案与截图已准备
 - [ ] 隐私声明页面可访问
