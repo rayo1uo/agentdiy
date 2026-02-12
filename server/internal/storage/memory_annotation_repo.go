@@ -12,21 +12,22 @@ import (
 
 type MemoryAnnotationRepository struct {
 	mu       sync.RWMutex
-	items    map[string][]annotation.Annotation
+	items    map[string]map[string][]annotation.Annotation
 	sequence atomic.Uint64
 }
 
 func NewMemoryAnnotationRepository() *MemoryAnnotationRepository {
 	return &MemoryAnnotationRepository{
-		items: make(map[string][]annotation.Annotation),
+		items: make(map[string]map[string][]annotation.Annotation),
 	}
 }
 
-func (r *MemoryAnnotationRepository) ListByURL(_ context.Context, url string) ([]annotation.Annotation, error) {
+func (r *MemoryAnnotationRepository) ListByURL(_ context.Context, userID, url string) ([]annotation.Annotation, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	source := r.items[url]
+	userItems := r.items[userID]
+	source := userItems[url]
 	result := make([]annotation.Annotation, 0, len(source))
 	for _, item := range source {
 		if item.Status == annotation.StatusActive {
@@ -37,9 +38,13 @@ func (r *MemoryAnnotationRepository) ListByURL(_ context.Context, url string) ([
 	return result, nil
 }
 
-func (r *MemoryAnnotationRepository) Create(_ context.Context, input annotation.CreateInput) (annotation.Annotation, error) {
+func (r *MemoryAnnotationRepository) Create(_ context.Context, userID string, input annotation.CreateInput) (annotation.Annotation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if _, exists := r.items[userID]; !exists {
+		r.items[userID] = make(map[string][]annotation.Annotation)
+	}
 
 	now := time.Now().UTC()
 	identifier := fmt.Sprintf("%d", r.sequence.Add(1))
@@ -49,6 +54,7 @@ func (r *MemoryAnnotationRepository) Create(_ context.Context, input annotation.
 
 	item := annotation.Annotation{
 		ID:          identifier,
+		UserID:      userID,
 		DocumentURL: input.URL,
 		Title:       input.Title,
 		QuoteText:   input.QuoteText,
@@ -64,15 +70,16 @@ func (r *MemoryAnnotationRepository) Create(_ context.Context, input annotation.
 		UpdatedAt:   now,
 	}
 
-	r.items[input.URL] = append(r.items[input.URL], item)
+	r.items[userID][input.URL] = append(r.items[userID][input.URL], item)
 	return item, nil
 }
 
-func (r *MemoryAnnotationRepository) UpdateComment(_ context.Context, id string, input annotation.UpdateCommentInput) (annotation.Annotation, error) {
+func (r *MemoryAnnotationRepository) UpdateComment(_ context.Context, userID, id string, input annotation.UpdateCommentInput) (annotation.Annotation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	items := r.items[input.URL]
+	userItems := r.items[userID]
+	items := userItems[input.URL]
 	for index := range items {
 		if items[index].ID != id || items[index].Status != annotation.StatusActive {
 			continue
@@ -81,18 +88,19 @@ func (r *MemoryAnnotationRepository) UpdateComment(_ context.Context, id string,
 		items[index].CommentText = input.CommentText
 		items[index].Version++
 		items[index].UpdatedAt = time.Now().UTC()
-		r.items[input.URL] = items
+		r.items[userID][input.URL] = items
 		return items[index], nil
 	}
 
 	return annotation.Annotation{}, ErrNotFound
 }
 
-func (r *MemoryAnnotationRepository) Delete(_ context.Context, url, id string) error {
+func (r *MemoryAnnotationRepository) Delete(_ context.Context, userID, url, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	items := r.items[url]
+	userItems := r.items[userID]
+	items := userItems[url]
 	for index := range items {
 		if items[index].ID != id || items[index].Status != annotation.StatusActive {
 			continue
@@ -101,7 +109,7 @@ func (r *MemoryAnnotationRepository) Delete(_ context.Context, url, id string) e
 		items[index].Status = annotation.StatusDeleted
 		items[index].Version++
 		items[index].UpdatedAt = time.Now().UTC()
-		r.items[url] = items
+		r.items[userID][url] = items
 		return nil
 	}
 

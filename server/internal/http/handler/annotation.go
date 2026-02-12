@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/luoyu15/agentdiy/server/internal/annotation"
+	"github.com/luoyu15/agentdiy/server/internal/middleware"
 	"github.com/luoyu15/agentdiy/server/internal/storage"
 	"github.com/luoyu15/agentdiy/server/internal/web"
 )
@@ -47,13 +48,19 @@ func (h AnnotationHandler) HandleItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h AnnotationHandler) list(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.UserIDFromContext(r.Context())
+	if userID == "" {
+		web.WriteError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+
 	url := strings.TrimSpace(r.URL.Query().Get("url"))
 	if url == "" {
 		web.WriteError(w, http.StatusBadRequest, "missing query parameter: url")
 		return
 	}
 
-	items, err := h.repo.ListByURL(r.Context(), url)
+	items, err := h.repo.ListByURL(r.Context(), userID, url)
 	if err != nil {
 		web.WriteError(w, http.StatusInternalServerError, "failed to list annotations")
 		return
@@ -63,6 +70,12 @@ func (h AnnotationHandler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h AnnotationHandler) create(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.UserIDFromContext(r.Context())
+	if userID == "" {
+		web.WriteError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+
 	var input annotation.CreateInput
 	if err := web.DecodeJSON(r, &input); err != nil {
 		web.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -74,7 +87,7 @@ func (h AnnotationHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.repo.Create(r.Context(), input)
+	item, err := h.repo.Create(r.Context(), userID, input)
 	if err != nil {
 		web.WriteError(w, http.StatusInternalServerError, "failed to create annotation")
 		return
@@ -84,6 +97,12 @@ func (h AnnotationHandler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h AnnotationHandler) updateComment(w http.ResponseWriter, r *http.Request, id string) {
+	userID := middleware.UserIDFromContext(r.Context())
+	if userID == "" {
+		web.WriteError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+
 	var input annotation.UpdateCommentInput
 	if err := web.DecodeJSON(r, &input); err != nil {
 		web.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -95,7 +114,7 @@ func (h AnnotationHandler) updateComment(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	item, err := h.repo.UpdateComment(r.Context(), id, input)
+	item, err := h.repo.UpdateComment(r.Context(), userID, id, input)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			web.WriteError(w, http.StatusNotFound, "annotation not found")
@@ -109,13 +128,19 @@ func (h AnnotationHandler) updateComment(w http.ResponseWriter, r *http.Request,
 }
 
 func (h AnnotationHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
+	userID := middleware.UserIDFromContext(r.Context())
+	if userID == "" {
+		web.WriteError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+
 	url := strings.TrimSpace(r.URL.Query().Get("url"))
 	if url == "" {
 		web.WriteError(w, http.StatusBadRequest, "missing query parameter: url")
 		return
 	}
 
-	if err := h.repo.Delete(r.Context(), url, id); err != nil {
+	if err := h.repo.Delete(r.Context(), userID, url, id); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			web.WriteError(w, http.StatusNotFound, "annotation not found")
 			return

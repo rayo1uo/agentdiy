@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/luoyu15/agentdiy/server/internal/auth"
 	"github.com/luoyu15/agentdiy/server/internal/config"
 	httpx "github.com/luoyu15/agentdiy/server/internal/http"
 	"github.com/luoyu15/agentdiy/server/internal/http/handler"
@@ -19,12 +21,14 @@ func main() {
 	cfg := config.FromEnv()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	repo := storage.NewMemoryAnnotationRepository()
+	annotationRepo, authRepo := buildRepositories(cfg, logger)
+	authService := auth.NewService(authRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	healthHandler := handler.NewHealthHandler()
-	annotationHandler := handler.NewAnnotationHandler(repo)
+	authHandler := handler.NewAuthHandler(authService)
+	annotationHandler := handler.NewAnnotationHandler(annotationRepo)
 	syncHandler := handler.NewSyncHandler()
 
-	router := httpx.NewRouter(healthHandler, annotationHandler, syncHandler)
+	router := httpx.NewRouter(cfg.JWTSecret, healthHandler, authHandler, annotationHandler, syncHandler)
 	server := httpx.NewServer(cfg.HTTPAddr, router)
 
 	go func() {
@@ -36,6 +40,27 @@ func main() {
 	}()
 
 	waitForShutdown(server, logger)
+}
+
+func buildRepositories(cfg config.Config, logger *slog.Logger) (storage.AnnotationRepository, auth.Repository) {
+	if cfg.StorageBackend != "mysql" {
+		return storage.NewMemoryAnnotationRepository(), storage.NewMemoryAuthRepository()
+	}
+
+	db, err := sql.Open("mysql", cfg.MySQLDSN)
+	if err != nil {
+		logger.Error("failed to initialize mysql storage, fallback to memory", "error", err)
+		return storage.NewMemoryAnnotationRepository(), storage.NewMemoryAuthRepository()
+	}
+
+	if err := db.Ping(); err != nil {
+		logger.Error("failed to ping mysql, fallback to memory", "error", err)
+		_ = db.Close()
+		return storage.NewMemoryAnnotationRepository(), storage.NewMemoryAuthRepository()
+	}
+
+	logger.Info("using mysql storage backend")
+	return storage.NewMySQLAnnotationRepository(db), storage.NewMySQLAuthRepository(db)
 }
 
 func waitForShutdown(server *http.Server, logger *slog.Logger) {
