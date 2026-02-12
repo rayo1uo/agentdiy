@@ -16,6 +16,7 @@
 - T16 客户端离线队列：extension background 已接入 `op_queue`、定时同步与手动触发同步入口。
 - T17 冲突与重试：已接入冲突队列、指数退避重试、最大重试次数、冲突任务重试入口。
 - T18 跨端联调：已补自动化双端收敛测试（win/mac 模拟）并产出联调报告文档。
+- T19 安全与隐私：已完成权限收敛、CORS 白名单、安全响应头、用户数据删除接口与审计日志。
 
 ## 当前状态
 - 插件端当前数据存储为 `chrome.storage.local`，用于 MVP 本地链路。
@@ -32,6 +33,7 @@
 - side panel 已支持冲突详情面板（逐条展示 op_id/message）以及逐条“重试/忽略”。
 - side panel 冲突详情支持按错误类型分组，并可“重试同类/忽略同类”。
 - 联调报告：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t18-cross-device-report.md`
+- 安全隐私报告：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t19-security-privacy-report.md`
 
 ## 下一步
-- T19 安全与隐私补齐（权限收敛、数据清理策略、发布前安全检查）。
+- T20 测试与发布准备（E2E 回归、商店材料、隐私声明发布文案）。

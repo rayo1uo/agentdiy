@@ -33,6 +33,7 @@ Copy `.env.example` and set values in your shell.
 - `DELETE /api/v1/annotations/{id}?url=...` (requires bearer token)
 - `POST /api/v1/sync/push` (requires bearer token)
 - `GET /api/v1/sync/pull?cursor=0&limit=50` (requires bearer token)
+- `DELETE /api/v1/me/data` (requires bearer token, soft-delete annotations + revoke refresh tokens + clear sync events)
 
 ## Database
 
@@ -45,3 +46,9 @@ For sync idempotency, also apply `migrations/0003_sync_op_dedup.sql`.
 `/api/v1/sync/push` request body fields:
 - `device_id`, `device_name`, `platform`
 - `operations[]` with `op_id`, `op_type(create|update_comment|delete)`, `url`, and annotation fields
+
+## Security Notes
+
+- Configure `ALLOWED_ORIGINS` to explicit trusted origins in production.
+- The server now applies baseline security headers (`X-Frame-Options`, `X-Content-Type-Options`, CSP, etc.).
+- Use HTTPS in production environments.

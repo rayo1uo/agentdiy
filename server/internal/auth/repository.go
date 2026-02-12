@@ -18,4 +18,5 @@ type Repository interface {
 	StoreRefreshToken(ctx context.Context, token RefreshToken) error
 	GetRefreshToken(ctx context.Context, rawToken string) (RefreshToken, error)
 	RevokeRefreshToken(ctx context.Context, rawToken string) error
+	RevokeAllRefreshTokensByUser(ctx context.Context, userID string) (int64, error)
 }

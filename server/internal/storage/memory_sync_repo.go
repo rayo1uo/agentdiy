@@ -89,3 +89,14 @@ func (r *MemorySyncRepository) LatestCursor(_ context.Context, userID string) (u
 	}
 	return events[len(events)-1].ID, nil
 }
+
+func (r *MemorySyncRepository) DeleteAllByUser(_ context.Context, userID string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	events := r.events[userID]
+	affected := int64(len(events))
+	delete(r.events, userID)
+	delete(r.opDedupByID, userID)
+	return affected, nil
+}

@@ -14,4 +14,5 @@ type AnnotationRepository interface {
 	Create(ctx context.Context, userID string, input annotation.CreateInput) (annotation.Annotation, error)
 	UpdateComment(ctx context.Context, userID, id string, input annotation.UpdateCommentInput) (annotation.Annotation, error)
 	Delete(ctx context.Context, userID, url, id string) error
+	SoftDeleteAllByUser(ctx context.Context, userID string) (int64, error)
 }

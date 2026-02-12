@@ -112,3 +112,21 @@ func (r *MemoryAuthRepository) RevokeRefreshToken(_ context.Context, rawToken st
 	r.refreshTokens[rawToken] = token
 	return nil
 }
+
+func (r *MemoryAuthRepository) RevokeAllRefreshTokensByUser(_ context.Context, userID string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var affected int64
+	now := time.Now().UTC()
+	for tokenKey, token := range r.refreshTokens {
+		if token.UserID != userID || token.RevokedAt != nil {
+			continue
+		}
+		token.RevokedAt = &now
+		r.refreshTokens[tokenKey] = token
+		affected++
+	}
+
+	return affected, nil
+}

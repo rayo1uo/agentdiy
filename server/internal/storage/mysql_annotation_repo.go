@@ -162,6 +162,26 @@ func (r *MySQLAnnotationRepository) Delete(ctx context.Context, userID, url, id 
 	return nil
 }
 
+func (r *MySQLAnnotationRepository) SoftDeleteAllByUser(ctx context.Context, userID string) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE annotations
+		SET status = 'deleted',
+			version = version + 1,
+			updated_at = CURRENT_TIMESTAMP(3)
+		WHERE user_id = ?
+		  AND status = 'active'
+	`, userID)
+	if err != nil {
+		return 0, err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
 func (r *MySQLAnnotationRepository) getByIDAndURL(ctx context.Context, userID, annotationID, url string) (annotation.Annotation, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT

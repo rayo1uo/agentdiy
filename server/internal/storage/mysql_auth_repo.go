@@ -117,3 +117,21 @@ func (r *MySQLAuthRepository) RevokeRefreshToken(ctx context.Context, rawToken s
 	}
 	return nil
 }
+
+func (r *MySQLAuthRepository) RevokeAllRefreshTokensByUser(ctx context.Context, userID string) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE refresh_tokens
+		SET revoked_at = CURRENT_TIMESTAMP(3)
+		WHERE user_id = ?
+		  AND revoked_at IS NULL
+	`, userID)
+	if err != nil {
+		return 0, err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
+}

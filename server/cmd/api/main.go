@@ -27,8 +27,17 @@ func main() {
 	authHandler := handler.NewAuthHandler(authService)
 	annotationHandler := handler.NewAnnotationHandler(annotationRepo)
 	syncHandler := handler.NewSyncHandler(annotationRepo, syncRepo)
+	privacyHandler := handler.NewPrivacyHandler(annotationRepo, authRepo, syncRepo, logger)
 
-	router := httpx.NewRouter(cfg.JWTSecret, healthHandler, authHandler, annotationHandler, syncHandler)
+	router := httpx.NewRouter(
+		cfg.JWTSecret,
+		cfg.AllowedOrigins,
+		healthHandler,
+		authHandler,
+		annotationHandler,
+		syncHandler,
+		privacyHandler,
+	)
 	server := httpx.NewServer(cfg.HTTPAddr, router)
 
 	go func() {

@@ -118,3 +118,30 @@ func (r *MemoryAnnotationRepository) Delete(_ context.Context, userID, url, id s
 
 	return ErrNotFound
 }
+
+func (r *MemoryAnnotationRepository) SoftDeleteAllByUser(_ context.Context, userID string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	userItems := r.items[userID]
+	if userItems == nil {
+		return 0, nil
+	}
+
+	var affected int64
+	now := time.Now().UTC()
+	for url, items := range userItems {
+		for index := range items {
+			if items[index].Status != annotation.StatusActive {
+				continue
+			}
+			items[index].Status = annotation.StatusDeleted
+			items[index].Version++
+			items[index].UpdatedAt = now
+			affected++
+		}
+		userItems[url] = items
+	}
+	r.items[userID] = userItems
+	return affected, nil
+}

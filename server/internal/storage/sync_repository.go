@@ -43,4 +43,5 @@ type SyncRepository interface {
 	AppendEvent(ctx context.Context, input AppendSyncEventInput) (SyncEvent, bool, error)
 	ListEvents(ctx context.Context, userID string, afterCursor uint64, limit int) ([]SyncEvent, uint64, error)
 	LatestCursor(ctx context.Context, userID string) (uint64, error)
+	DeleteAllByUser(ctx context.Context, userID string) (int64, error)
 }

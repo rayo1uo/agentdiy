@@ -127,6 +127,22 @@ func (r *MySQLSyncRepository) LatestCursor(ctx context.Context, userID string) (
 	return uint64(cursor.Int64), nil
 }
 
+func (r *MySQLSyncRepository) DeleteAllByUser(ctx context.Context, userID string) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `
+		DELETE FROM sync_events
+		WHERE user_id = ?
+	`, userID)
+	if err != nil {
+		return 0, err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
 func (r *MySQLSyncRepository) ensureDevice(ctx context.Context, tx *sql.Tx, input AppendSyncEventInput) error {
 	deviceName := input.DeviceName
 	if deviceName == "" {
