@@ -5,6 +5,11 @@ import manifest from "./manifest.config";
 
 export default defineConfig({
   plugins: [react(), crx({ manifest })],
+  resolve: {
+    alias: {
+      "@": "/src"
+    }
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true

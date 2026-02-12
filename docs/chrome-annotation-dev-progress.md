@@ -39,6 +39,7 @@
 - 手工回归清单：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t20-manual-regression-checklist.md`
 - 商店提交模板：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t20-webstore-submission-kit.md`
 - 隐私政策草案：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-privacy-policy-draft.md`
+- 已在 2026-02-12 完成 extension 依赖安装后的 `npm --prefix extension run build`，构建产物输出至 `extension/dist/`。
 
 ## 下一步
-- 在可联网环境安装 extension 依赖并执行 `npm --prefix extension run build`。
+- 在 Chrome 加载 `extension/dist/` 执行 T20 手工回归清单并补齐实测记录。

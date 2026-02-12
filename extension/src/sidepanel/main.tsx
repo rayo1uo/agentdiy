@@ -240,7 +240,7 @@ function SidePanelApp(): JSX.Element {
     }
     await sendRuntimeMessage({
       type: "sync.conflicts.retry",
-      payload: { opIds }
+      payload: { opIds: opIDs }
     });
     await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel-retry-annotation-conflicts" } });
     await reloadSyncState();
@@ -286,7 +286,7 @@ function SidePanelApp(): JSX.Element {
     if (opIDs.length === 0) {
       return;
     }
-    await sendRuntimeMessage({ type: "sync.conflicts.remove", payload: { opIds } });
+    await sendRuntimeMessage({ type: "sync.conflicts.remove", payload: { opIds: opIDs } });
     await reloadSyncState();
   };
 

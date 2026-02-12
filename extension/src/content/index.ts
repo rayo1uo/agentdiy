@@ -6,7 +6,6 @@ import { extractPosition, focusAnnotation, renderAnnotations } from "./highlight
 const TOOLBAR_CLASS = "annota-toolbar";
 
 let toolbar: HTMLDivElement | null = null;
-let renderedAnnotations: Annotation[] = [];
 
 const currentURL = (): string => window.location.href;
 const pageTitle = (): string => document.title;
@@ -55,7 +54,7 @@ const refreshAnnotations = async (): Promise<void> => {
     payload: { url: currentURL() }
   });
 
-  renderedAnnotations = renderAnnotations(result.annotations);
+  renderAnnotations(result.annotations);
 };
 
 const createAnnotation = async (commentText: string): Promise<void> => {
