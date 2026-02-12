@@ -1,0 +1,48 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: annota-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-annota}
+      MYSQL_USER: ${MYSQL_USER:-annota}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-annota}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  api:
+    container_name: annota-api
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      HTTP_ADDR: ":8080"
+      STORAGE_BACKEND: mysql
+      MYSQL_DSN: "${MYSQL_USER:-annota}:${MYSQL_PASSWORD:-annota}@tcp(mysql:3306)/${MYSQL_DATABASE:-annota}?parseTime=true&charset=utf8mb4"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:5173,chrome-extension://YOUR_EXTENSION_ID}"
+      JWT_SECRET: "${JWT_SECRET:-annota-dev-secret-change-me}"
+      ACCESS_TOKEN_TTL_SECONDS: "${ACCESS_TOKEN_TTL_SECONDS:-900}"
+      REFRESH_TOKEN_TTL_SECONDS: "${REFRESH_TOKEN_TTL_SECONDS:-2592000}"
+      MIGRATE_MAX_RETRIES: "${MIGRATE_MAX_RETRIES:-30}"
+      MIGRATE_RETRY_INTERVAL_SECONDS: "${MIGRATE_RETRY_INTERVAL_SECONDS:-2}"
+    ports:
+      - "${API_PORT:-8080}:8080"
+
+volumes:
+  mysql_data:

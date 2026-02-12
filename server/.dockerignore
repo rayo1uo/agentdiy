@@ -1,0 +1,6 @@
+.git
+.gitignore
+*.md
+**/*_test.go
+tmp
+dist

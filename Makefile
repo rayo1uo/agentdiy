@@ -1,6 +1,6 @@
 ROOT_DIR := $(shell pwd)
 
-.PHONY: extension-install extension-build server-test server-run server-migrate release-check
+.PHONY: extension-install extension-build server-test server-run server-migrate release-check docker-up docker-down docker-logs
 
 extension-install:
 	npm --prefix $(ROOT_DIR)/extension install
@@ -19,3 +19,13 @@ server-migrate:
 
 release-check:
 	$(ROOT_DIR)/scripts/release-check.sh
+
+docker-up:
+	cp -n $(ROOT_DIR)/.env.docker.example $(ROOT_DIR)/.env || true
+	docker compose up -d --build
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f api mysql
