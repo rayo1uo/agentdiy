@@ -28,15 +28,16 @@ type Annotation struct {
 }
 
 type CreateInput struct {
-	URL         string `json:"url"`
-	Title       string `json:"title"`
-	QuoteText   string `json:"quote_text"`
-	PrefixText  string `json:"prefix_text"`
-	SuffixText  string `json:"suffix_text"`
-	StartOffset int    `json:"start_offset"`
-	EndOffset   int    `json:"end_offset"`
-	Color       string `json:"color"`
-	CommentText string `json:"comment_text"`
+	AnnotationID string `json:"annotation_id,omitempty"`
+	URL          string `json:"url"`
+	Title        string `json:"title"`
+	QuoteText    string `json:"quote_text"`
+	PrefixText   string `json:"prefix_text"`
+	SuffixText   string `json:"suffix_text"`
+	StartOffset  int    `json:"start_offset"`
+	EndOffset    int    `json:"end_offset"`
+	Color        string `json:"color"`
+	CommentText  string `json:"comment_text"`
 }
 
 type UpdateCommentInput struct {

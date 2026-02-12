@@ -47,7 +47,10 @@ func (r *MemoryAnnotationRepository) Create(_ context.Context, userID string, in
 	}
 
 	now := time.Now().UTC()
-	identifier := fmt.Sprintf("%d", r.sequence.Add(1))
+	identifier := input.AnnotationID
+	if identifier == "" {
+		identifier = fmt.Sprintf("%d", r.sequence.Add(1))
+	}
 	if input.Color == "" {
 		input.Color = "#ffe58f"
 	}

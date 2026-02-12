@@ -5,7 +5,7 @@ export default defineManifest({
   name: "Annota MVP",
   version: "0.1.0",
   description: "Highlight and comment on web pages with multi-device sync-ready architecture.",
-  permissions: ["storage", "activeTab", "scripting", "tabs", "sidePanel"],
+  permissions: ["storage", "activeTab", "scripting", "tabs", "sidePanel", "alarms"],
   host_permissions: ["<all_urls>"],
   background: {
     service_worker: "src/background/index.ts",

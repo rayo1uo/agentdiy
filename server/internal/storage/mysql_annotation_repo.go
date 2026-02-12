@@ -75,9 +75,12 @@ func (r *MySQLAnnotationRepository) Create(ctx context.Context, userID string, i
 		return annotation.Annotation{}, err
 	}
 
-	annotationID, err := newResourceID("ann")
-	if err != nil {
-		return annotation.Annotation{}, err
+	annotationID := input.AnnotationID
+	if annotationID == "" {
+		annotationID, err = newResourceID("ann")
+		if err != nil {
+			return annotation.Annotation{}, err
+		}
 	}
 
 	if input.Color == "" {

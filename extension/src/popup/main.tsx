@@ -39,6 +39,15 @@ function PopupApp(): JSX.Element {
     }
   };
 
+  const triggerSyncNow = async (): Promise<void> => {
+    try {
+      await chrome.runtime.sendMessage({ type: "sync.now", payload: { reason: "popup-click" } });
+      setStatus("Sync scheduled.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to schedule sync.");
+    }
+  };
+
   return (
     <main style={containerStyle}>
       <h2 style={{ margin: 0, fontSize: 18 }}>Annota MVP</h2>
@@ -47,6 +56,9 @@ function PopupApp(): JSX.Element {
       </p>
       <button style={buttonStyle} onClick={() => void openSidePanel()}>
         打开侧边栏
+      </button>
+      <button style={{ ...buttonStyle, background: "#0f766e" }} onClick={() => void triggerSyncNow()}>
+        立即同步
       </button>
       <p style={{ marginTop: 10, fontSize: 12, color: "#334155" }}>{status}</p>
     </main>

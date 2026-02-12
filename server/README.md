@@ -31,11 +31,17 @@ Copy `.env.example` and set values in your shell.
 - `POST /api/v1/annotations` (requires bearer token)
 - `PATCH /api/v1/annotations/{id}` (requires bearer token)
 - `DELETE /api/v1/annotations/{id}?url=...` (requires bearer token)
-- `POST /api/v1/sync/push` (stub, requires bearer token)
-- `GET /api/v1/sync/pull` (stub, requires bearer token)
+- `POST /api/v1/sync/push` (requires bearer token)
+- `GET /api/v1/sync/pull?cursor=0&limit=50` (requires bearer token)
 
 ## Database
 
 Use `migrations/0001_init.sql` and `migrations/0002_auth_refresh_tokens.sql` to initialize MySQL tables.
 
 When `STORAGE_BACKEND=mysql` is enabled, the service will try to connect with `MYSQL_DSN`. If MySQL is unavailable, it falls back to in-memory storage.
+
+For sync idempotency, also apply `migrations/0003_sync_op_dedup.sql`.
+
+`/api/v1/sync/push` request body fields:
+- `device_id`, `device_name`, `platform`
+- `operations[]` with `op_id`, `op_type(create|update_comment|delete)`, `url`, and annotation fields
