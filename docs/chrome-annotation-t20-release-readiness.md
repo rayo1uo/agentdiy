@@ -42,3 +42,9 @@
 1. 按手工回归清单完成一轮全流程检查。
 2. 准备商店素材（图标、截图、描述、隐私政策链接）。
 3. 在 Chrome Web Store Developer Dashboard 提交审核。
+
+## 6. 一键回归命令
+- 脚本：`/Users/luoyu15/Documents/work/agentdiy/scripts/release-check.sh`
+- 覆盖项：
+  - extension `typecheck + build`
+  - backend `go test ./...`
