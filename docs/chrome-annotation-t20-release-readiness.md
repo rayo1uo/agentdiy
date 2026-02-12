@@ -45,6 +45,7 @@
 
 ## 6. 一键回归命令
 - 脚本：`/Users/luoyu15/Documents/work/agentdiy/scripts/release-check.sh`
+- Make 命令：`make release-check`
 - 覆盖项：
   - extension `typecheck + build`
   - backend `go test ./...`

@@ -43,6 +43,7 @@
 - 隐私政策草案：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-privacy-policy-draft.md`
 - 已在 2026-02-12 完成 extension 依赖安装后的 `npm --prefix extension run build`，构建产物输出至 `extension/dist/`。
 - 已新增发布前一键检查脚本：`/Users/luoyu15/Documents/work/agentdiy/scripts/release-check.sh`（执行 extension 构建 + backend 测试）。
+- 已新增根目录 `Makefile`，统一 `extension-build/server-test/server-migrate/release-check` 等常用命令。
 
 ## 下一步
 - 在 Chrome 加载 `extension/dist/` 执行 T20 手工回归清单并补齐实测记录。
