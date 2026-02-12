@@ -1,17 +1,69 @@
 .annota-toolbar {
   position: absolute;
   z-index: 2147483646;
-  display: inline-flex;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-  background: #111827;
-  color: #f9fafb;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 240px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #d1d5db;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.2);
+  background: #ffffff;
+  color: #111827;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 }
 
-.annota-toolbar button {
+.annota-toolbar-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.annota-color-row {
+  display: flex;
+  gap: 8px;
+}
+
+.annota-color-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.annota-color-btn[data-active="true"] {
+  border-color: #1f2937;
+}
+
+.annota-comment-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-family: inherit;
+  color: #111827;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.annota-comment-input:focus {
+  outline: 2px solid #93c5fd;
+  border-color: #60a5fa;
+}
+
+.annota-action-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.annota-action-row button {
   border: 0;
   border-radius: 8px;
   padding: 6px 10px;
@@ -20,20 +72,42 @@
   font-weight: 600;
 }
 
-.annota-toolbar button[data-kind="highlight"] {
-  background: #facc15;
+.annota-action-row button[data-kind="primary"] {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.annota-action-row button[data-kind="ghost"] {
+  background: #f3f4f6;
   color: #111827;
 }
 
-.annota-toolbar button[data-kind="comment"] {
-  background: #60a5fa;
-  color: #111827;
+.annota-toolbar-error {
+  color: #dc2626;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.annota-action-row button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .annota-highlight {
   border-radius: 3px;
   padding: 0 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  background-image: none;
+  background-color: var(--annota-highlight-color, #ffe58f);
+  color: var(--annota-highlight-text-color, #0f172a);
+  -webkit-text-fill-color: var(--annota-highlight-text-color, #0f172a);
   transition: box-shadow 180ms ease;
+}
+
+.annota-highlight * {
+  color: var(--annota-highlight-text-color, #0f172a) !important;
+  -webkit-text-fill-color: var(--annota-highlight-text-color, #0f172a) !important;
 }
 
 .annota-highlight-focus {

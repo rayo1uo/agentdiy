@@ -9,6 +9,8 @@ import {
 import type {
   AnnotationChangedEvent,
   AnnotationListResponse,
+  AnnotationURLSummary,
+  AnnotationURLSummaryResponse,
   RuntimeRequest,
   RuntimeResponse
 } from "@/shared/messages";
@@ -742,6 +744,57 @@ const handleList = async (url: string): Promise<Annotation[]> => {
   return listAnnotations(url);
 };
 
+const listAnnotationURLSummaries = async (): Promise<AnnotationURLSummaryResponse> => {
+  const storageData = await chrome.storage.local.get(null);
+  const summaries: AnnotationURLSummary[] = [];
+
+  for (const [key, value] of Object.entries(storageData)) {
+    if (!key.startsWith("annotations:")) {
+      continue;
+    }
+
+    const url = key.slice("annotations:".length).trim();
+    if (!url || !Array.isArray(value)) {
+      continue;
+    }
+
+    const annotations = (value as Annotation[]).filter((item) => item.status === "active");
+    if (annotations.length === 0) {
+      continue;
+    }
+
+    let latest = annotations[0];
+    for (const item of annotations) {
+      const latestTimestamp = Date.parse(latest.updatedAt || latest.createdAt || "");
+      const itemTimestamp = Date.parse(item.updatedAt || item.createdAt || "");
+      if (itemTimestamp > latestTimestamp) {
+        latest = item;
+      }
+    }
+
+    summaries.push({
+      url,
+      title: latest.title || url,
+      count: annotations.length,
+      updatedAt: latest.updatedAt || latest.createdAt || ""
+    });
+  }
+
+  summaries.sort((a, b) => {
+    const aTime = Date.parse(a.updatedAt || "");
+    const bTime = Date.parse(b.updatedAt || "");
+    if (aTime !== bTime) {
+      return bTime - aTime;
+    }
+    if (a.count !== b.count) {
+      return b.count - a.count;
+    }
+    return a.url.localeCompare(b.url);
+  });
+
+  return { summaries };
+};
+
 const handleCreate = async (payload: AnnotationCreateInput): Promise<Annotation> => {
   const annotations = await listAnnotations(payload.url);
   const created = createAnnotation(payload);
@@ -1012,6 +1065,11 @@ chrome.runtime.onMessage.addListener((request: RuntimeRequest, _sender, sendResp
         case "annotation.list": {
           const annotations = await handleList(request.payload.url);
           sendResponse(ok<AnnotationListResponse>({ annotations }));
+          return;
+        }
+        case "annotation.urls": {
+          const result = await listAnnotationURLSummaries();
+          sendResponse(ok<AnnotationURLSummaryResponse>(result));
           return;
         }
         case "annotation.create": {

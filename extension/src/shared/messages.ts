@@ -7,6 +7,7 @@ import type {
 
 export type RuntimeRequest =
   | { type: "annotation.list"; payload: { url: string } }
+  | { type: "annotation.urls"; payload?: {} }
   | { type: "annotation.create"; payload: AnnotationCreateInput }
   | { type: "annotation.updateComment"; payload: AnnotationUpdateCommentInput }
   | { type: "annotation.delete"; payload: AnnotationDeleteInput }
@@ -31,4 +32,15 @@ export interface AnnotationChangedEvent {
 
 export interface AnnotationListResponse {
   annotations: Annotation[];
+}
+
+export interface AnnotationURLSummary {
+  url: string;
+  title: string;
+  count: number;
+  updatedAt: string;
+}
+
+export interface AnnotationURLSummaryResponse {
+  summaries: AnnotationURLSummary[];
 }

@@ -23,7 +23,6 @@ export default defineManifest({
     {
       matches: ["<all_urls>"],
       js: ["src/content/index.ts"],
-      css: ["src/content/styles.css"],
       run_at: "document_idle"
     }
   ]

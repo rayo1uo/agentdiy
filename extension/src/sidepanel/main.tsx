@@ -4,29 +4,10 @@ import type { Annotation } from "@/shared/annotation";
 import type { AnnotationChangedEvent, AnnotationListResponse } from "@/shared/messages";
 import type { SyncConflictItem } from "@/shared/sync";
 import { sendRuntimeMessage } from "@/lib/runtime";
+import "./styles.css";
 
-const containerStyle: React.CSSProperties = {
-  fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
-  padding: 14,
-  color: "#0f172a"
-};
-
-const cardStyle: React.CSSProperties = {
-  border: "1px solid #e2e8f0",
-  borderRadius: 10,
-  padding: 12,
-  marginBottom: 10,
-  background: "#ffffff"
-};
-
-const buttonStyle: React.CSSProperties = {
-  border: "1px solid #cbd5e1",
-  borderRadius: 8,
-  background: "#f8fafc",
-  padding: "6px 8px",
-  cursor: "pointer",
-  fontSize: 12
-};
+const PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
+const COLOR_OPTIONS = ["#ffe58f", "#ffd6e7", "#c7f9cc", "#bfdbfe", "#e9d5ff"] as const;
 
 const getActiveTabContext = async (): Promise<{ tabId: number | null; url: string }> => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -72,8 +53,15 @@ function SidePanelApp(): JSX.Element {
   const [syncState, setSyncState] = React.useState<SyncPanelState>(DEFAULT_SYNC_STATE);
   const [pageConflicts, setPageConflicts] = React.useState<SyncConflictItem[]>([]);
   const [showConflictPanel, setShowConflictPanel] = React.useState(false);
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState<number>(PAGE_SIZE_OPTIONS[0]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
+  const [editingAnnotation, setEditingAnnotation] = React.useState<Annotation | null>(null);
+  const [editingCommentText, setEditingCommentText] = React.useState("");
+  const [editingError, setEditingError] = React.useState("");
+  const [editingSaving, setEditingSaving] = React.useState(false);
+  const editingInputRef = React.useRef<HTMLTextAreaElement | null>(null);
 
   const reloadConflictDetails = React.useCallback(
     async (targetURL?: string) => {
@@ -147,14 +135,48 @@ function SidePanelApp(): JSX.Element {
     [reloadSyncState, url]
   );
 
-  React.useEffect(() => {
-    void (async () => {
-      const tabContext = await getActiveTabContext();
-      setURL(tabContext.url);
-      setTabID(tabContext.tabId);
-      await reload(tabContext.url);
-    })();
+  const refreshActiveTab = React.useCallback(async (): Promise<void> => {
+    const tabContext = await getActiveTabContext();
+    setURL(tabContext.url);
+    setTabID(tabContext.tabId);
+    await reload(tabContext.url);
   }, [reload]);
+
+  React.useEffect(() => {
+    void refreshActiveTab();
+  }, [refreshActiveTab]);
+
+  React.useEffect(() => {
+    const onActivated = (): void => {
+      void refreshActiveTab();
+    };
+
+    const onUpdated = (_tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab): void => {
+      if (!tab.active) {
+        return;
+      }
+      if (typeof changeInfo.url === "string" || changeInfo.status === "complete") {
+        void refreshActiveTab();
+      }
+    };
+
+    const onWindowFocusChanged = (windowID: number): void => {
+      if (windowID === chrome.windows.WINDOW_ID_NONE) {
+        return;
+      }
+      void refreshActiveTab();
+    };
+
+    chrome.tabs.onActivated.addListener(onActivated);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.windows.onFocusChanged.addListener(onWindowFocusChanged);
+
+    return () => {
+      chrome.tabs.onActivated.removeListener(onActivated);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.windows.onFocusChanged.removeListener(onWindowFocusChanged);
+    };
+  }, [refreshActiveTab]);
 
   React.useEffect(() => {
     const listener = (message: AnnotationChangedEvent): void => {
@@ -175,6 +197,27 @@ function SidePanelApp(): JSX.Element {
     return () => window.clearInterval(interval);
   }, [reloadSyncState]);
 
+  React.useEffect(() => {
+    setPage(1);
+  }, [url, pageSize]);
+
+  React.useEffect(() => {
+    if (!editingAnnotation) {
+      return;
+    }
+    window.setTimeout(() => {
+      editingInputRef.current?.focus();
+      editingInputRef.current?.setSelectionRange(editingCommentText.length, editingCommentText.length);
+    }, 0);
+  }, [editingAnnotation]);
+
+  React.useEffect(() => {
+    setEditingAnnotation(null);
+    setEditingCommentText("");
+    setEditingError("");
+    setEditingSaving(false);
+  }, [url]);
+
   const onFocus = async (id: string): Promise<void> => {
     if (!tabID) {
       return;
@@ -187,17 +230,37 @@ function SidePanelApp(): JSX.Element {
   };
 
   const onEdit = async (annotation: Annotation): Promise<void> => {
-    const value = window.prompt("编辑评论", annotation.commentText) ?? annotation.commentText;
-    await sendRuntimeMessage({
-      type: "annotation.updateComment",
-      payload: { url, id: annotation.id, commentText: value }
-    });
-    await reload();
-    if (tabID) {
-      await chrome.tabs.sendMessage(tabID, {
-        type: "annotation.refresh",
-        payload: { url }
+    setEditingAnnotation(annotation);
+    setEditingCommentText(annotation.commentText ?? "");
+    setEditingError("");
+    setEditingSaving(false);
+  };
+
+  const onSaveEditedComment = async (): Promise<void> => {
+    if (!editingAnnotation || editingSaving) {
+      return;
+    }
+
+    setEditingSaving(true);
+    setEditingError("");
+    try {
+      await sendRuntimeMessage({
+        type: "annotation.updateComment",
+        payload: { url, id: editingAnnotation.id, commentText: editingCommentText }
       });
+      await reload();
+      if (tabID) {
+        await chrome.tabs.sendMessage(tabID, {
+          type: "annotation.refresh",
+          payload: { url }
+        });
+      }
+      setEditingAnnotation(null);
+      setEditingCommentText("");
+    } catch (updateError) {
+      setEditingError(updateError instanceof Error ? updateError.message : "保存评论失败");
+    } finally {
+      setEditingSaving(false);
     }
   };
 
@@ -218,6 +281,18 @@ function SidePanelApp(): JSX.Element {
   const onSyncNow = async (): Promise<void> => {
     await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel" } });
     await reloadSyncState();
+  };
+
+  const openLoginSettings = async (): Promise<void> => {
+    try {
+      await chrome.runtime.openOptionsPage();
+    } catch {
+      await chrome.tabs.create({ url: chrome.runtime.getURL("src/options/index.html") });
+    }
+  };
+
+  const openLibraryPage = async (): Promise<void> => {
+    await chrome.tabs.create({ url: chrome.runtime.getURL("src/options/index.html#library") });
   };
 
   const onRetryPageConflicts = async (): Promise<void> => {
@@ -295,6 +370,10 @@ function SidePanelApp(): JSX.Element {
     () => new Set(syncState.conflictAnnotationIDs),
     [syncState.conflictAnnotationIDs]
   );
+  const pendingVisibleCount = React.useMemo(
+    () => annotations.filter((item) => pendingSet.has(item.id)).length,
+    [annotations, pendingSet]
+  );
   const conflictGroups = React.useMemo(() => {
     const groups = new Map<string, SyncConflictItem[]>();
     for (const item of pageConflicts) {
@@ -306,76 +385,95 @@ function SidePanelApp(): JSX.Element {
     return Array.from(groups.entries()).map(([message, items]) => ({ message, items }));
   }, [pageConflicts]);
 
-  return (
-    <main style={containerStyle}>
-      <h2 style={{ margin: 0, fontSize: 18 }}>页面高亮与评论</h2>
-      <p style={{ marginTop: 8, color: "#475569", fontSize: 12, wordBreak: "break-all" }}>{url || "当前标签页无 URL"}</p>
+  const totalPages = React.useMemo(() => {
+    if (annotations.length === 0) {
+      return 1;
+    }
+    return Math.ceil(annotations.length / pageSize);
+  }, [annotations.length, pageSize]);
 
-      <section style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, marginBottom: 10 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: "#334155" }}>待同步: {syncState.queueLength}</span>
-          <span style={{ fontSize: 12, color: syncState.conflictCount > 0 ? "#b91c1c" : "#334155" }}>
-            冲突: {syncState.conflictCount}
-          </span>
-          <button
-            style={{ ...buttonStyle }}
-            onClick={() => void onRetryPageConflicts()}
-            disabled={syncState.conflictOpIDs.length === 0}
-          >
-            重试本页冲突
+  React.useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  const pagedAnnotations = React.useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return annotations.slice(start, start + pageSize);
+  }, [annotations, page, pageSize]);
+
+  return (
+    <main className="sp-root">
+      <header className="sp-header">
+        <h2 className="sp-title">页面高亮与评论</h2>
+        <div className="sp-header-actions">
+          <button className="sp-btn sp-btn-header" onClick={() => void openLoginSettings()}>
+            登录设置
           </button>
-          <button
-            style={{ ...buttonStyle }}
-            onClick={() => void setShowConflictPanel((current) => !current)}
-            disabled={pageConflicts.length === 0}
-          >
-            {showConflictPanel ? "隐藏冲突详情" : "查看冲突详情"}
+          <button className="sp-btn sp-btn-header" onClick={() => void openLibraryPage()}>
+            我的划词库
           </button>
-          <button style={{ ...buttonStyle, marginLeft: "auto" }} onClick={() => void onSyncNow()}>
+        </div>
+        <div className="sp-url-card">
+          <div className="sp-url-label">当前页面</div>
+          {url ? (
+            <a className="sp-url-link" href={url} title={url} target="_blank" rel="noreferrer">
+              {url}
+            </a>
+          ) : (
+            <p className="sp-url-empty">当前标签页无 URL</p>
+          )}
+        </div>
+      </header>
+
+      <section className="sp-sync-card">
+        <div className="sp-sync-top">
+          <div className="sp-sync-metrics">
+            <span className="sp-metric">待同步高亮: {pendingVisibleCount}</span>
+            <span className="sp-metric">待同步操作: {syncState.queueLength}</span>
+            <span className={`sp-metric ${syncState.conflictCount > 0 ? "sp-metric-danger" : ""}`}>
+              冲突: {syncState.conflictCount}
+            </span>
+          </div>
+          <button className="sp-btn sp-btn-primary sp-sync-now" onClick={() => void onSyncNow()}>
             立即同步
           </button>
         </div>
-        <div style={{ marginTop: 6, fontSize: 11, color: "#64748b" }}>上次同步: {syncState.lastSyncAt || "-"}</div>
-        {syncState.lastSyncError ? (
-          <div style={{ marginTop: 4, fontSize: 11, color: "#b91c1c" }}>错误: {syncState.lastSyncError}</div>
-        ) : null}
+        <div className="sp-sync-actions">
+          <button className="sp-btn" onClick={() => void onRetryPageConflicts()} disabled={syncState.conflictOpIDs.length === 0}>
+            重试本页冲突
+          </button>
+          <button className="sp-btn" onClick={() => void setShowConflictPanel((current) => !current)} disabled={pageConflicts.length === 0}>
+            {showConflictPanel ? "隐藏冲突详情" : "查看冲突详情"}
+          </button>
+        </div>
+        <div className="sp-subtext">上次同步: {syncState.lastSyncAt || "-"}</div>
+        {syncState.lastSyncError ? <div className="sp-error-text">错误: {syncState.lastSyncError}</div> : null}
       </section>
 
       {showConflictPanel ? (
-        <section style={{ border: "1px solid #fecaca", borderRadius: 10, padding: 10, marginBottom: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <div style={{ fontWeight: 700, color: "#991b1b" }}>本页冲突详情 ({pageConflicts.length})</div>
-            <button
-              style={{ ...buttonStyle, borderColor: "#fca5a5", color: "#991b1b", marginLeft: "auto" }}
-              onClick={() => void onIgnorePageConflicts()}
-              disabled={pageConflicts.length === 0}
-            >
+        <section className="sp-conflict-card">
+          <div className="sp-conflict-head">
+            <div className="sp-conflict-title">本页冲突详情 ({pageConflicts.length})</div>
+            <button className="sp-btn sp-btn-danger" onClick={() => void onIgnorePageConflicts()} disabled={pageConflicts.length === 0}>
               忽略本页全部冲突
             </button>
           </div>
-          {pageConflicts.length === 0 ? <div style={{ fontSize: 12, color: "#64748b" }}>无冲突明细</div> : null}
+          {pageConflicts.length === 0 ? <div className="sp-subtext">无冲突明细</div> : null}
           {conflictGroups.length > 0 ? (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>按错误类型分组</div>
+            <div className="sp-conflict-groups">
+              <div className="sp-subtext">按错误类型分组</div>
               {conflictGroups.map((group) => (
-                <div
-                  key={group.message}
-                  style={{ border: "1px dashed #fecaca", borderRadius: 8, padding: 8, marginBottom: 6 }}
-                >
-                  <div style={{ fontSize: 12, color: "#991b1b" }}>
+                <div key={group.message} className="sp-conflict-group-item">
+                  <div className="sp-conflict-message">
                     {group.message} ({group.items.length})
                   </div>
-                  <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                    <button
-                      style={{ ...buttonStyle, borderColor: "#fecaca", color: "#991b1b" }}
-                      onClick={() => void onRetryConflictGroup(group.message)}
-                    >
+                  <div className="sp-actions">
+                    <button className="sp-btn sp-btn-danger" onClick={() => void onRetryConflictGroup(group.message)}>
                       重试同类
                     </button>
-                    <button
-                      style={{ ...buttonStyle, borderColor: "#fecaca", color: "#991b1b" }}
-                      onClick={() => void onIgnoreConflictGroup(group.message)}
-                    >
+                    <button className="sp-btn sp-btn-danger" onClick={() => void onIgnoreConflictGroup(group.message)}>
                       忽略同类
                     </button>
                   </div>
@@ -384,27 +482,16 @@ function SidePanelApp(): JSX.Element {
             </div>
           ) : null}
           {pageConflicts.map((conflict) => (
-            <article
-              key={`${conflict.opId}-${conflict.createdAt}`}
-              style={{ border: "1px solid #fee2e2", borderRadius: 8, padding: 8, marginBottom: 6, background: "#fff1f2" }}
-            >
-              <div style={{ fontSize: 12, color: "#334155" }}>op_id: {conflict.opId}</div>
-              <div style={{ fontSize: 12, color: "#334155" }}>type: {conflict.operation.opType}</div>
-              <div style={{ fontSize: 12, color: "#334155" }}>
-                annotation: {conflict.operation.annotationId || "(none)"}
-              </div>
-              <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4 }}>{conflict.message}</div>
-              <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                <button
-                  style={{ ...buttonStyle, borderColor: "#fecaca", color: "#991b1b" }}
-                  onClick={() => void onRetrySingleConflict(conflict.opId)}
-                >
+            <article key={`${conflict.opId}-${conflict.createdAt}`} className="sp-conflict-item">
+              <div className="sp-subtext">op_id: {conflict.opId}</div>
+              <div className="sp-subtext">type: {conflict.operation.opType}</div>
+              <div className="sp-subtext">annotation: {conflict.operation.annotationId || "(none)"}</div>
+              <div className="sp-conflict-message">{conflict.message}</div>
+              <div className="sp-actions">
+                <button className="sp-btn sp-btn-danger" onClick={() => void onRetrySingleConflict(conflict.opId)}>
                   重试此冲突
                 </button>
-                <button
-                  style={{ ...buttonStyle, borderColor: "#fecaca", color: "#991b1b" }}
-                  onClick={() => void onIgnoreSingleConflict(conflict.opId)}
-                >
+                <button className="sp-btn sp-btn-danger" onClick={() => void onIgnoreSingleConflict(conflict.opId)}>
                   忽略此冲突
                 </button>
               </div>
@@ -413,56 +500,160 @@ function SidePanelApp(): JSX.Element {
         </section>
       ) : null}
 
-      {loading ? <p>加载中...</p> : null}
-      {error ? <p style={{ color: "#dc2626" }}>{error}</p> : null}
-      {!loading && annotations.length === 0 ? <p>暂无高亮，先去页面划词试试。</p> : null}
-      {annotations.map((annotation) => {
+      {loading ? <p className="sp-subtext">加载中...</p> : null}
+      {error ? <p className="sp-error-text">{error}</p> : null}
+
+      {!loading && annotations.length > 0 ? (
+        <section className="sp-pagination-bar">
+          <span className="sp-subtext">共 {annotations.length} 条</span>
+          <label className="sp-page-size">
+            每页
+            <select
+              className="sp-select"
+              value={pageSize}
+              onChange={(event) => setPageSize(Number(event.target.value))}
+            >
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="sp-pagination-controls">
+            <button className="sp-btn" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1}>
+              上一页
+            </button>
+            <span className="sp-subtext">
+              第 {page}/{totalPages} 页
+            </span>
+            <button
+              className="sp-btn"
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+              disabled={page >= totalPages}
+            >
+              下一页
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {!loading && annotations.length === 0 ? <p className="sp-subtext">暂无高亮，先去页面划词试试。</p> : null}
+      {pagedAnnotations.map((annotation) => {
         const isConflict = conflictSet.has(annotation.id);
         const isPending = pendingSet.has(annotation.id);
 
         return (
-          <article key={annotation.id} style={cardStyle}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ fontWeight: 600, lineHeight: 1.4, flex: 1 }}>{annotation.quoteText}</div>
-              {isConflict ? (
-                <span style={{ fontSize: 11, color: "#fff", background: "#b91c1c", padding: "2px 6px", borderRadius: 999 }}>
-                  冲突
-                </span>
-              ) : null}
-              {!isConflict && isPending ? (
-                <span style={{ fontSize: 11, color: "#0c4a6e", background: "#bfdbfe", padding: "2px 6px", borderRadius: 999 }}>
-                  待同步
-                </span>
-              ) : null}
-              {!isConflict && !isPending ? (
-                <span style={{ fontSize: 11, color: "#166534", background: "#bbf7d0", padding: "2px 6px", borderRadius: 999 }}>
-                  已同步
-                </span>
-              ) : null}
+          <article key={annotation.id} className="sp-card">
+            <div className="sp-card-head">
+              <div
+                className="sp-quote"
+                style={
+                  {
+                    "--sp-quote-color": annotation.color
+                  } as React.CSSProperties
+                }
+              >
+                {annotation.quoteText}
+              </div>
+              {isConflict ? <span className="sp-badge sp-badge-conflict">冲突</span> : null}
+              {!isConflict && isPending ? <span className="sp-badge sp-badge-pending">待同步</span> : null}
+              {!isConflict && !isPending ? <span className="sp-badge sp-badge-success">已同步</span> : null}
             </div>
-            <p style={{ color: "#475569", marginBottom: 8, marginTop: 8 }}>{annotation.commentText || "(无评论)"}</p>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button style={buttonStyle} onClick={() => void onFocus(annotation.id)}>
+            <p className="sp-comment">{annotation.commentText || "(无评论)"}</p>
+            <div className="sp-actions">
+              <button className="sp-btn" onClick={() => void onFocus(annotation.id)}>
                 定位
               </button>
               {isConflict ? (
-                <button
-                  style={{ ...buttonStyle, borderColor: "#fca5a5", color: "#b91c1c" }}
-                  onClick={() => void onRetryAnnotationConflicts(annotation.id)}
-                >
+                <button className="sp-btn sp-btn-danger" onClick={() => void onRetryAnnotationConflicts(annotation.id)}>
                   重试该条冲突
                 </button>
               ) : null}
-              <button style={buttonStyle} onClick={() => void onEdit(annotation)}>
+              <button className="sp-btn" onClick={() => void onEdit(annotation)}>
                 编辑评论
               </button>
-              <button style={buttonStyle} onClick={() => void onDelete(annotation)}>
+              <button className="sp-btn" onClick={() => void onDelete(annotation)}>
                 删除
               </button>
             </div>
           </article>
         );
       })}
+
+      {editingAnnotation ? (
+        <div
+          className="sp-editor-overlay"
+          onClick={() => {
+            if (!editingSaving) {
+              setEditingAnnotation(null);
+            }
+          }}
+        >
+          <div
+            className="sp-editor-dialog"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="高亮与评论"
+          >
+            <div className="sp-editor-title">高亮与评论</div>
+            <div className="sp-editor-subtitle">编辑评论</div>
+            <div className="sp-editor-color-row" aria-hidden>
+              {COLOR_OPTIONS.map((color) => (
+                <span
+                  key={color}
+                  className={`sp-editor-color-dot ${editingAnnotation.color === color ? "is-active" : ""}`}
+                  style={{ backgroundColor: color }}
+                />
+              ))}
+            </div>
+            <div
+              className="sp-editor-quote"
+              style={
+                {
+                  "--sp-quote-color": editingAnnotation.color
+                } as React.CSSProperties
+              }
+            >
+              {editingAnnotation.quoteText}
+            </div>
+            <textarea
+              ref={editingInputRef}
+              className="sp-editor-input"
+              rows={4}
+              value={editingCommentText}
+              placeholder="请输入评论（可为空）"
+              onChange={(event) => setEditingCommentText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && !editingSaving) {
+                  event.preventDefault();
+                  setEditingAnnotation(null);
+                }
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  void onSaveEditedComment();
+                }
+              }}
+            />
+            {editingError ? <div className="sp-error-text">{editingError}</div> : null}
+            <div className="sp-editor-actions">
+              <button
+                className="sp-btn"
+                disabled={editingSaving}
+                onClick={() => {
+                  setEditingAnnotation(null);
+                }}
+              >
+                取消
+              </button>
+              <button className="sp-btn sp-btn-primary" disabled={editingSaving} onClick={() => void onSaveEditedComment()}>
+                {editingSaving ? "保存中..." : "保存评论"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
