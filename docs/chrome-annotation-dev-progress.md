@@ -17,6 +17,7 @@
 - T17 冲突与重试：已接入冲突队列、指数退避重试、最大重试次数、冲突任务重试入口。
 - T18 跨端联调：已补自动化双端收敛测试（win/mac 模拟）并产出联调报告文档。
 - T19 安全与隐私：已完成权限收敛、CORS 白名单、安全响应头、用户数据删除接口与审计日志。
+- T20 测试与发布准备：已完成发布就绪报告、手工回归清单、商店提交素材模板与隐私政策草案。
 
 ## 当前状态
 - 插件端当前数据存储为 `chrome.storage.local`，用于 MVP 本地链路。
@@ -34,6 +35,10 @@
 - side panel 冲突详情支持按错误类型分组，并可“重试同类/忽略同类”。
 - 联调报告：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t18-cross-device-report.md`
 - 安全隐私报告：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t19-security-privacy-report.md`
+- 发布就绪报告：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t20-release-readiness.md`
+- 手工回归清单：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t20-manual-regression-checklist.md`
+- 商店提交模板：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t20-webstore-submission-kit.md`
+- 隐私政策草案：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-privacy-policy-draft.md`
 
 ## 下一步
-- T20 测试与发布准备（E2E 回归、商店材料、隐私声明发布文案）。
+- 在可联网环境安装 extension 依赖并执行 `npm --prefix extension run build`。
