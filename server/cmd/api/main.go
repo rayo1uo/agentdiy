@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/luoyu15/agentdiy/server/internal/auth"
 	"github.com/luoyu15/agentdiy/server/internal/config"
 	httpx "github.com/luoyu15/agentdiy/server/internal/http"

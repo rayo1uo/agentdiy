@@ -22,6 +22,7 @@
 ## 当前状态
 - 插件端当前数据存储为 `chrome.storage.local`，用于 MVP 本地链路。
 - 当前默认使用内存仓储；当 `STORAGE_BACKEND=mysql` 且数据库可用时将启用 MySQL 仓储。
+- 已修复 MySQL 驱动注册，`STORAGE_BACKEND=mysql` 不再因 `unknown driver "mysql"` 静默回退到内存仓储。
 - 同步接口不再是 stub，当前可处理 `create/update_comment/delete` 三类操作。
 - 已新增 `server/migrations/0002_auth_refresh_tokens.sql` 用于 refresh token 持久化表结构。
 - 已新增 `server/migrations/0003_sync_op_dedup.sql` 用于 sync op 去重索引。
