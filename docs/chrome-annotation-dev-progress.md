@@ -9,6 +9,7 @@
 - T07 Side Panel 列表：已支持列表展示、定位、编辑、删除。
 - T08 后端工程初始化：已创建 `server/`，可运行 HTTP 服务。
 - T09 MySQL 建模迁移：已提供 `server/migrations/0001_init.sql`。
+- T09 MySQL 建模迁移：已提供 `server/migrations/*.sql` 与一键迁移命令 `go run ./cmd/migrate`。
 - T10 鉴权 API：已实现 `register/login/refresh/logout`，采用 `JWT + Refresh Token`。
 - 注释与同步接口已接入 Bearer JWT 鉴权中间件，按用户维度隔离数据。
 - T11 注释仓储接入准备：已实现 MySQL 仓储代码与 `memory/mysql` 存储后端切换。

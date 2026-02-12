@@ -37,11 +37,17 @@ Copy `.env.example` and set values in your shell.
 
 ## Database
 
-Use `migrations/0001_init.sql` and `migrations/0002_auth_refresh_tokens.sql` to initialize MySQL tables.
+Initialize MySQL tables with one command:
+
+```bash
+go run ./cmd/migrate
+```
+
+The migrator executes all `migrations/*.sql` files in lexicographic order and records applied versions in `schema_migrations`.
 
 When `STORAGE_BACKEND=mysql` is enabled, the service will try to connect with `MYSQL_DSN`. If MySQL is unavailable, it falls back to in-memory storage.
 
-For sync idempotency, also apply `migrations/0003_sync_op_dedup.sql`.
+Current migration set already includes sync idempotency index migration (`0003_sync_op_dedup.sql`).
 
 `/api/v1/sync/push` request body fields:
 - `device_id`, `device_name`, `platform`
