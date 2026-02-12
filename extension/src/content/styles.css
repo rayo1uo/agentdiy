@@ -1,0 +1,41 @@
+.annota-toolbar {
+  position: absolute;
+  z-index: 2147483646;
+  display: inline-flex;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  background: #111827;
+  color: #f9fafb;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.annota-toolbar button {
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.annota-toolbar button[data-kind="highlight"] {
+  background: #facc15;
+  color: #111827;
+}
+
+.annota-toolbar button[data-kind="comment"] {
+  background: #60a5fa;
+  color: #111827;
+}
+
+.annota-highlight {
+  border-radius: 3px;
+  padding: 0 1px;
+  transition: box-shadow 180ms ease;
+}
+
+.annota-highlight-focus {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.45);
+}
