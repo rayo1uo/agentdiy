@@ -39,6 +39,7 @@
 - 安全隐私报告：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t19-security-privacy-report.md`
 - 发布就绪报告：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t20-release-readiness.md`
 - 手工回归清单：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t20-manual-regression-checklist.md`
+- 手工回归结果模板：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t20-manual-regression-results.md`
 - 商店提交模板：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-t20-webstore-submission-kit.md`
 - 隐私政策草案：`/Users/luoyu15/Documents/work/agentdiy/docs/chrome-annotation-privacy-policy-draft.md`
 - 已在 2026-02-12 完成 extension 依赖安装后的 `npm --prefix extension run build`，构建产物输出至 `extension/dist/`。

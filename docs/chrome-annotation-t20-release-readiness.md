@@ -39,7 +39,7 @@
   - 解决：加载 `extension/dist/`，按 `docs/chrome-annotation-t20-manual-regression-checklist.md` 执行并记录结果
 
 ## 5. 发布前建议动作（顺序）
-1. 按手工回归清单完成一轮全流程检查。
+1. 按手工回归清单完成一轮全流程检查，并在 `docs/chrome-annotation-t20-manual-regression-results.md` 记录结果。
 2. 准备商店素材（图标、截图、描述、隐私政策链接）。
 3. 在 Chrome Web Store Developer Dashboard 提交审核。
 
