@@ -11,3 +11,6 @@ server/bin/
 
 # macOS
 .DS_Store
+
+# Joycode
+.joycode

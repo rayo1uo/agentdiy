@@ -126,7 +126,7 @@ func collectMigrationFiles(dir string) ([]migrationFile, error) {
 			return nil
 		}
 		entries = append(entries, migrationFile{
-			version: filepath.Base(path),
+			version: filepath.Base(path), // 获取文件名作为版本号
 			path:    path,
 		})
 		return nil
@@ -155,7 +155,7 @@ func applyMigration(db *sql.DB, file migrationFile) error {
 		return err
 	}
 	defer func() {
-		_ = tx.Rollback()
+		_ = tx.Rollback() // 这是一个安全机制，如果后续代码发生错误或Panic，事务会自动回滚，如果事务最终成功Commit，则Rollback不会产生任何效果
 	}()
 
 	if _, err := tx.Exec(string(content)); err != nil {

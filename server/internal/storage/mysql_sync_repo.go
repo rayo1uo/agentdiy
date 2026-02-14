@@ -102,7 +102,7 @@ func (r *MySQLSyncRepository) ListEvents(ctx context.Context, userID string, aft
 			return nil, afterCursor, scanErr
 		}
 		result = append(result, event)
-		nextCursor = event.ID
+		nextCursor = event.ID // 将nextCursor更新为最后一条记录的ID
 	}
 	if err := rows.Err(); err != nil {
 		return nil, afterCursor, err
@@ -153,6 +153,7 @@ func (r *MySQLSyncRepository) ensureDevice(ctx context.Context, tx *sql.Tx, inpu
 		platform = "unknown"
 	}
 
+	// 更新设备信息，设备信息不存在则执行插入操作，否则更新设备最近活跃时间
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO devices(id, user_id, device_name, platform, last_seen_at)
 		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP(3))

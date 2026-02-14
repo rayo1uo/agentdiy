@@ -276,3 +276,105 @@
 - LINER Chrome Web Store：https://chromewebstore.google.com/detail/liner-chatgpt-ai-copilot/bmhcbmnbenmcecpmpepghooflbehcack
 - Glasp 功能页：https://glasp.co/web-highlighter/
 - Glasp 私有高亮与导出：https://glasp.co/features/private-highlight
+
+## 13. 架构图
+
+```mermaid
+flowchart LR
+  subgraph EXT["Chrome Extension (MV3)"]
+    POP["Popup UI"]
+    SP["SidePanel UI"]
+    OPT["Options UI"]
+    CS["Content Script (网页注入)"]
+    BG["Background Service Worker"]
+    LST["chrome.storage.local"]
+    SST["chrome.storage.sync"]
+    ALM["chrome.alarms (每2分钟)"]
+  end
+
+  subgraph API["Backend API"]
+    RT["Router (/api/v1/*)"]
+    MW["JWT Middleware (Bearer)"]
+    AH["Auth Handler"]
+    ANH["Annotation Handler"]
+    SYH["Sync Handler"]
+  end
+
+  subgraph DB["Storage Layer"]
+    AR["Annotation Repository"]
+    SR["Sync Repository"]
+    UR["Auth Repository"]
+    MYSQL["MySQL (users, annotations, sync_events, devices, refresh_tokens)"]
+  end
+
+  POP -- "runtime message: sync.now" --> BG
+  SP -- "runtime message: annotation.*, sync.*" --> BG
+  OPT -- "runtime message: annotation.urls/list, sync.*" --> BG
+  CS -- "runtime message: annotation.list/create" --> BG
+
+  OPT -- "HTTP: /auth/register|login|logout (直连)" --> RT
+
+  BG -- "读写token/队列/冲突/cursor" --> LST
+  BG -- "读写syncEnabled/apiBaseUrl" --> SST
+  ALM -- "定时触发syncNow" --> BG
+
+  BG -- "HTTP: /annotations, /sync/push, /sync/pull, /auth/refresh" --> RT
+  RT --> AH
+  RT --> MW
+  MW --> ANH
+  MW --> SYH
+
+  AH --> UR
+  ANH --> AR
+  SYH --> AR
+  SYH --> SR
+
+  UR --> MYSQL
+  AR --> MYSQL
+  SR --> MYSQL
+
+  BG -- "runtime event: annotation.changed" --> SP
+  BG -- "runtime event: annotation.changed" --> CS
+
+```
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant CS as Content Script
+  participant BG as Background SW
+  participant LS as Local Storage
+  participant API as Backend API
+  participant DB as MySQL
+
+  U->>CS: 选中文本并点击保存
+  CS->>BG: annotation.create(url, quote, comment...)
+
+  BG->>LS: 先本地落库（立即可见）
+  BG->>API: POST /api/v1/annotations (Bearer)
+
+  alt "直写成功"
+    API->>DB: INSERT/UPDATE annotation
+    API-->>BG: 返回annotation(服务端版本)
+    BG->>LS: upsert服务端数据
+    BG-->>CS: annotation.changed
+  else "直写失败(离线/鉴权/服务异常)"
+    BG->>LS: 入同步队列(queue)
+    BG->>BG: scheduleSync()
+  end
+
+  loop "自动或手动触发"
+    Note over BG: 触发源=alarm(2m)/startup/popup-sidepanel立即同步
+    BG->>API: POST /api/v1/sync/push
+    API->>DB: 应用操作并写sync_events
+    API-->>BG: accepted/conflicts/next_cursor
+
+    BG->>API: GET /api/v1/sync/pull?cursor=...
+    API->>DB: 读取增量sync_events
+    API-->>BG: events/next_cursor
+    BG->>LS: 应用事件、更新cursor、记录冲突
+    BG-->>CS: annotation.changed
+  end
+
+```

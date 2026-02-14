@@ -4,3 +4,4 @@
 **/*_test.go
 tmp
 dist
+.joycode

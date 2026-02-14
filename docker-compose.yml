@@ -14,7 +14,7 @@ services:
     ports:
       - "${MYSQL_PORT:-3306}:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - mysql_data:/var/lib/mysql # 把容器里的数据库文件映射到外面的mysql_data卷，即使删除了容器数据也不会丢失
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 5s
@@ -25,10 +25,13 @@ services:
   api:
     container_name: annota-api
     build:
-      context: ./server
+      context: ./server # 构建的上下文在server目录下
       dockerfile: Dockerfile
+      args:
+        GOPROXY: "${GOPROXY:-https://goproxy.cn,direct}"
+        GOSUMDB: "${GOSUMDB:-sum.golang.google.cn}"
     restart: unless-stopped
-    depends_on:
+    depends_on: # API服务必须等到MYSQL服务启动完成后才开始启动
       mysql:
         condition: service_healthy
     environment:

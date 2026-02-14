@@ -17,12 +17,13 @@ var (
 )
 
 type AccessClaims struct {
-	Sub string `json:"sub"`
-	Eml string `json:"eml"`
-	Iat int64  `json:"iat"`
-	Exp int64  `json:"exp"`
+	Sub string `json:"sub"` // 用户ID
+	Eml string `json:"eml"` // 用户邮箱
+	Iat int64  `json:"iat"` // 签发时间，Unix时间戳
+	Exp int64  `json:"exp"` // 过期时间，Unix时间戳
 }
 
+// 签发JWT Token, 返回Token字符串以及Token过期时间
 func GenerateAccessToken(secret, userID, email string, ttl time.Duration) (string, int64, error) {
 	now := time.Now().UTC()
 	expiresAt := now.Add(ttl)
@@ -55,6 +56,7 @@ func GenerateAccessToken(secret, userID, email string, ttl time.Duration) (strin
 	return token, int64(ttl.Seconds()), nil
 }
 
+// 解析JWT Token获得AccessClaims
 func ParseAccessToken(secret, token string) (AccessClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {

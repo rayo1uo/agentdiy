@@ -8,6 +8,10 @@ const TOOLBAR_CLASS = "annota-toolbar";
 const COLOR_OPTIONS = ["#ffe58f", "#ffd6e7", "#c7f9cc", "#bfdbfe", "#e9d5ff"];
 const TOOLBAR_GAP = 8;
 const VIEWPORT_MARGIN = 8;
+const RENDER_RETRY_DELAYS_MS = [300, 900, 1800, 3200] as const;
+const FOCUS_RETRY_DELAYS_MS = [200, 600, 1200, 2200] as const;
+const DOM_OBSERVER_WINDOW_MS = 15000;
+const DOM_RENDER_DEBOUNCE_MS = 180;
 
 type SelectionDraft = {
   quoteText: string;
@@ -19,9 +23,15 @@ type SelectionDraft = {
 
 let toolbar: HTMLDivElement | null = null;
 let activeDraft: SelectionDraft | null = null;
+let latestAnnotations: Annotation[] = [];
+let renderRetryTimers: number[] = [];
+let mutationObserver: MutationObserver | null = null;
+let mutationObserverStopTimer: number | null = null;
+let mutationRenderTimer: number | null = null;
 
 const currentURL = (): string => window.location.href;
 const pageTitle = (): string => document.title;
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const getQuoteContext = (selectedText: string): { prefixText: string; suffixText: string } => {
   const bodyText = document.body.innerText || "";
@@ -62,13 +72,116 @@ const getCurrentSelectionRange = (): Range | null => {
   return range;
 };
 
-const refreshAnnotations = async (): Promise<void> => {
+const clearRenderRetryTimers = (): void => {
+  for (const timerID of renderRetryTimers) {
+    window.clearTimeout(timerID);
+  }
+  renderRetryTimers = [];
+};
+
+const stopMutationObserver = (): void => {
+  if (mutationObserver) {
+    mutationObserver.disconnect();
+    mutationObserver = null;
+  }
+  if (mutationObserverStopTimer !== null) {
+    window.clearTimeout(mutationObserverStopTimer);
+    mutationObserverStopTimer = null;
+  }
+  if (mutationRenderTimer !== null) {
+    window.clearTimeout(mutationRenderTimer);
+    mutationRenderTimer = null;
+  }
+};
+
+const renderLatestAnnotations = (): { renderedCount: number; totalCount: number } => {
+  const rendered = renderAnnotations(latestAnnotations);
+  return { renderedCount: rendered.length, totalCount: latestAnnotations.length };
+};
+
+const startMutationObserver = (): void => {
+  if (mutationObserver || !document.body || latestAnnotations.length === 0) {
+    return;
+  }
+
+  mutationObserver = new MutationObserver(() => {
+    if (mutationRenderTimer !== null) {
+      return;
+    }
+
+    mutationRenderTimer = window.setTimeout(() => {
+      mutationRenderTimer = null;
+      const { renderedCount, totalCount } = renderLatestAnnotations();
+      if (renderedCount >= totalCount) {
+        stopMutationObserver();
+      }
+    }, DOM_RENDER_DEBOUNCE_MS);
+  });
+
+  mutationObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true
+  });
+
+  mutationObserverStopTimer = window.setTimeout(() => {
+    stopMutationObserver();
+  }, DOM_OBSERVER_WINDOW_MS);
+};
+
+const scheduleRenderRetries = (): void => {
+  clearRenderRetryTimers();
+
+  for (const delay of RENDER_RETRY_DELAYS_MS) {
+    const timerID = window.setTimeout(() => {
+      const { renderedCount, totalCount } = renderLatestAnnotations();
+      if (renderedCount >= totalCount) {
+        stopMutationObserver();
+      }
+    }, delay);
+    renderRetryTimers.push(timerID);
+  }
+};
+
+const refreshAnnotations = async (): Promise<{ renderedCount: number; totalCount: number }> => {
   const result = await sendRuntimeMessage<AnnotationListResponse>({
     type: "annotation.list",
     payload: { url: currentURL() }
   });
 
-  renderAnnotations(result.annotations);
+  latestAnnotations = result.annotations;
+  const stats = renderLatestAnnotations();
+  if (stats.renderedCount < stats.totalCount) {
+    startMutationObserver();
+    scheduleRenderRetries();
+  } else {
+    stopMutationObserver();
+    clearRenderRetryTimers();
+  }
+  return stats;
+};
+
+const focusAnnotationWithRecovery = async (annotationID: string): Promise<void> => {
+  if (focusAnnotation(annotationID)) {
+    return;
+  }
+
+  try {
+    await refreshAnnotations();
+  } catch {
+    return;
+  }
+
+  if (focusAnnotation(annotationID)) {
+    return;
+  }
+
+  for (const delay of FOCUS_RETRY_DELAYS_MS) {
+    await sleep(delay);
+    if (focusAnnotation(annotationID)) {
+      return;
+    }
+  }
 };
 
 const createAnnotation = async (
@@ -331,7 +444,7 @@ const onRuntimeMessage = (message: RuntimeRequest | AnnotationChangedEvent): voi
   }
 
   if (message.type === "annotation.focus") {
-    focusAnnotation(message.payload.id);
+    void focusAnnotationWithRecovery(message.payload.id);
   }
 };
 
@@ -348,7 +461,11 @@ const bootstrap = async (): Promise<void> => {
     onRuntimeMessage(message as RuntimeRequest | AnnotationChangedEvent);
   });
 
-  await refreshAnnotations();
+  try {
+    await refreshAnnotations();
+  } catch {
+    // Ignore initial load errors in content script; page can still function and retry later.
+  }
 };
 
 void bootstrap();

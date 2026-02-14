@@ -1,9 +1,22 @@
 FROM golang:1.23-alpine AS builder
 
+ARG GOPROXY=https://goproxy.cn,direct
+ARG GOSUMDB=sum.golang.google.cn
+ENV GOPROXY=${GOPROXY}
+ENV GOSUMDB=${GOSUMDB}
+
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN set -eux; \
+  n=0; \
+  until [ "$n" -ge 5 ]; do \
+    go mod download && break; \
+    n=$((n + 1)); \
+    echo "go mod download failed, retry ${n}/5 in 3s..."; \
+    sleep 3; \
+  done; \
+  [ "$n" -lt 5 ]
 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/api ./cmd/api \

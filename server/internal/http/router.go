@@ -19,10 +19,10 @@ func NewRouter(
 	mux := http.NewServeMux()
 
 	mux.Handle("/api/v1/health", healthHandler)
-	mux.HandleFunc("/api/v1/auth/register", authHandler.Register)
-	mux.HandleFunc("/api/v1/auth/login", authHandler.Login)
-	mux.HandleFunc("/api/v1/auth/refresh", authHandler.Refresh)
-	mux.HandleFunc("/api/v1/auth/logout", authHandler.Logout)
+	mux.HandleFunc("/api/v1/auth/register", authHandler.Register) // 用户注册
+	mux.HandleFunc("/api/v1/auth/login", authHandler.Login)       // 用户登陆
+	mux.HandleFunc("/api/v1/auth/refresh", authHandler.Refresh)   // 用户刷新Token
+	mux.HandleFunc("/api/v1/auth/logout", authHandler.Logout)     // 用户登出
 	mux.HandleFunc("/api/v1/annotations", middleware.RequireAccessToken(jwtSecret, annotationHandler.HandleCollection))
 	mux.HandleFunc("/api/v1/annotations/", middleware.RequireAccessToken(jwtSecret, annotationHandler.HandleItem))
 	mux.HandleFunc("/api/v1/sync/push", middleware.RequireAccessToken(jwtSecret, syncHandler.Push))
