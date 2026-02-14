@@ -590,7 +590,16 @@ const applyRetryBackoff = (
 
 const syncNow = async (_reason: string): Promise<void> => {
   const config = await loadSyncConfig();
-  if (!config.enabled || !config.apiBaseURL || !config.accessToken) {
+  if (!config.enabled) {
+    await chrome.storage.local.set({ [STORAGE_KEY.lastSyncError]: "sync disabled in settings" });
+    return;
+  }
+  if (!config.apiBaseURL) {
+    await chrome.storage.local.set({ [STORAGE_KEY.lastSyncError]: "sync skipped: API Base URL is empty" });
+    return;
+  }
+  if (!config.accessToken) {
+    await chrome.storage.local.set({ [STORAGE_KEY.lastSyncError]: "sync skipped: missing access token, please login" });
     return;
   }
 
@@ -720,9 +729,9 @@ const syncNow = async (_reason: string): Promise<void> => {
   });
 };
 
-const scheduleSync = (reason: string): void => {
+const runSync = (reason: string): Promise<void> => {
   if (syncInFlight) {
-    return;
+    return syncInFlight;
   }
   syncInFlight = syncNow(reason)
     .catch((error) => {
@@ -732,6 +741,11 @@ const scheduleSync = (reason: string): void => {
     .finally(() => {
       syncInFlight = null;
     });
+  return syncInFlight;
+};
+
+const scheduleSync = (reason: string): void => {
+  void runSync(reason);
 };
 
 const handleList = async (url: string): Promise<Annotation[]> => {
@@ -1096,8 +1110,14 @@ chrome.runtime.onMessage.addListener((request: RuntimeRequest, _sender, sendResp
           return;
         }
         case "sync.now": {
-          scheduleSync(request.payload.reason ?? "manual");
-          sendResponse(ok({ scheduled: true }));
+          const reason = request.payload.reason ?? "manual";
+          if (request.payload.wait) {
+            await runSync(reason);
+            sendResponse(ok({ scheduled: true, completed: true }));
+            return;
+          }
+          scheduleSync(reason);
+          sendResponse(ok({ scheduled: true, completed: false }));
           return;
         }
         case "sync.state": {
@@ -1121,7 +1141,9 @@ chrome.runtime.onMessage.addListener((request: RuntimeRequest, _sender, sendResp
           return;
         }
         case "annotation.refresh":
-        case "annotation.focus": {
+        case "annotation.refreshAll":
+        case "annotation.focus":
+        case "annotation.editComment": {
           sendResponse(ok({ forwarded: true }));
           return;
         }

@@ -40,6 +40,21 @@ export interface AnnotationDeleteInput {
   id: string;
 }
 
-export const DEFAULT_HIGHLIGHT_COLOR = "#ffe58f";
+export const HIGHLIGHT_COLOR_OPTIONS = [
+  "#ffe58f",
+  "#ffd6e7",
+  "#c7f9cc",
+  "#bfdbfe",
+  "#e9d5ff",
+  "#fbcfe8",
+  "#fde68a",
+  "#86efac",
+  "#93c5fd",
+  "#fca5a5",
+  "#67e8f9",
+  "#d9f99d"
+] as const;
+
+export const DEFAULT_HIGHLIGHT_COLOR = HIGHLIGHT_COLOR_OPTIONS[0];
 
 export const annotationStorageKey = (url: string): string => `annotations:${url}`;

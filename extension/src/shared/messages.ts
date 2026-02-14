@@ -11,13 +11,15 @@ export type RuntimeRequest =
   | { type: "annotation.create"; payload: AnnotationCreateInput }
   | { type: "annotation.updateComment"; payload: AnnotationUpdateCommentInput }
   | { type: "annotation.delete"; payload: AnnotationDeleteInput }
-  | { type: "sync.now"; payload: { reason?: string } }
+  | { type: "sync.now"; payload: { reason?: string; wait?: boolean } }
   | { type: "sync.state"; payload?: { url?: string } }
   | { type: "sync.conflicts.list"; payload?: {} }
   | { type: "sync.conflicts.retry"; payload?: { opIds?: string[] } }
   | { type: "sync.conflicts.remove"; payload?: { opIds?: string[] } }
   | { type: "annotation.refresh"; payload: { url: string } }
-  | { type: "annotation.focus"; payload: { id: string } };
+  | { type: "annotation.refreshAll"; payload?: {} }
+  | { type: "annotation.focus"; payload: { id: string } }
+  | { type: "annotation.editComment"; payload: { id: string; url?: string } };
 
 export type RuntimeResponse<T = unknown> = {
   ok: boolean;

@@ -13,12 +13,17 @@ interface RGBColor {
   b: number;
 }
 
-const shouldSkipNode = (node: Text): boolean => {
+type QuoteContext = {
+  prefixText: string;
+  suffixText: string;
+};
+
+const shouldSkipNode = (node: Text, options?: { excludeHighlights?: boolean }): boolean => {
   const parent = node.parentElement;
   if (!parent) {
     return true;
   }
-  if (parent.closest(`.${HIGHLIGHT_CLASS}`)) {
+  if (options?.excludeHighlights && parent.closest(`.${HIGHLIGHT_CLASS}`)) {
     return true;
   }
 
@@ -26,13 +31,13 @@ const shouldSkipNode = (node: Text): boolean => {
   return ["script", "style", "noscript", "textarea"].includes(tagName);
 };
 
-const walkTextNodes = (root: Node): Text[] => {
+const walkTextNodes = (root: Node, options?: { excludeHighlights?: boolean }): Text[] => {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
 
   while (walker.nextNode()) {
     const current = walker.currentNode as Text;
-    if (current.textContent && current.textContent.length > 0 && !shouldSkipNode(current)) {
+    if (current.textContent && current.textContent.length > 0 && !shouldSkipNode(current, options)) {
       nodes.push(current);
     }
   }
@@ -40,8 +45,13 @@ const walkTextNodes = (root: Node): Text[] => {
   return nodes;
 };
 
+const flattenDocumentText = (): string =>
+  walkTextNodes(document.body, { excludeHighlights: false }).map((node) => node.textContent ?? "").join("");
+
 export const extractPosition = (range: Range): { startOffset: number; endOffset: number } | null => {
-  const textNodes = walkTextNodes(document.body);
+  // Offsets must be based on full page text. Excluding already-highlighted text
+  // would shift all later annotations on the same page.
+  const textNodes = walkTextNodes(document.body, { excludeHighlights: false });
   let cursor = 0;
   let startOffset = -1;
   let endOffset = -1;
@@ -82,7 +92,7 @@ export const extractPosition = (range: Range): { startOffset: number; endOffset:
 };
 
 const locateTextBoundary = (offset: number): TextBoundary | null => {
-  const textNodes = walkTextNodes(document.body);
+  const textNodes = walkTextNodes(document.body, { excludeHighlights: false });
   let cursor = 0;
 
   for (const textNode of textNodes) {
@@ -184,7 +194,7 @@ const pickReadableTextColor = (backgroundColor: string): string => {
 const collectRangeTextSegments = (range: Range): RangeTextSegment[] => {
   const segments: RangeTextSegment[] = [];
   const appendIfValid = (node: Text): void => {
-    if (shouldSkipNode(node)) {
+    if (shouldSkipNode(node, { excludeHighlights: true })) {
       return;
     }
     if (!range.intersectsNode(node)) {
@@ -302,4 +312,24 @@ export const focusAnnotation = (annotationID: string): boolean => {
     target.classList.remove("annota-highlight-focus");
   }, 1200);
   return true;
+};
+
+export const getQuoteContextByOffsets = (
+  startOffset: number,
+  endOffset: number,
+  contextLength = 32
+): QuoteContext => {
+  const fullText = flattenDocumentText();
+  if (startOffset < 0 || endOffset < startOffset || startOffset > fullText.length) {
+    return { prefixText: "", suffixText: "" };
+  }
+
+  const clampedEnd = Math.max(startOffset, Math.min(endOffset, fullText.length));
+  const prefixStart = Math.max(0, startOffset - contextLength);
+  const suffixEnd = Math.min(fullText.length, clampedEnd + contextLength);
+
+  return {
+    prefixText: fullText.slice(prefixStart, startOffset),
+    suffixText: fullText.slice(clampedEnd, suffixEnd)
+  };
 };

@@ -11,8 +11,22 @@ import type { SyncConflictItem } from "@/shared/sync";
 
 const SETTINGS_KEY_SYNC_ENABLED = "settings:syncEnabled";
 const SETTINGS_KEY_API_BASE = "settings:apiBaseUrl";
+const SETTINGS_KEY_TOOLBAR_OPACITY = "settings:toolbarOpacity";
+const SETTINGS_KEY_TOOLBAR_WIDTH = "settings:toolbarWidth";
 const AUTH_KEY_ACCESS_TOKEN = "auth:accessToken";
 const AUTH_KEY_REFRESH_TOKEN = "auth:refreshToken";
+const SYNC_KEY_QUEUE = "sync:queue";
+const SYNC_KEY_CONFLICTS = "sync:conflicts";
+const SYNC_KEY_CURSOR = "sync:cursor";
+const SYNC_KEY_LAST_SYNC_AT = "sync:lastSyncAt";
+const SYNC_KEY_LAST_SYNC_ERROR = "sync:lastSyncError";
+const ANNOTATION_KEY_PREFIX = "annotations:";
+const TOOLBAR_OPACITY_MIN = 0.55;
+const TOOLBAR_OPACITY_MAX = 1;
+const TOOLBAR_WIDTH_MIN = 240;
+const TOOLBAR_WIDTH_MAX = 520;
+
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 type OptionsTab = "settings" | "library";
 
@@ -41,6 +55,8 @@ function OptionsApp(): JSX.Element {
   const [activeTab, setActiveTab] = React.useState<OptionsTab>(parseTabFromHash());
   const [syncEnabled, setSyncEnabled] = React.useState(true);
   const [apiBaseURL, setAPIBaseURL] = React.useState("http://localhost:8080");
+  const [toolbarOpacity, setToolbarOpacity] = React.useState(0.92);
+  const [toolbarWidth, setToolbarWidth] = React.useState(320);
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [authMessage, setAuthMessage] = React.useState("");
@@ -55,6 +71,7 @@ function OptionsApp(): JSX.Element {
   });
   const [urlSummaries, setURLSummaries] = React.useState<AnnotationURLSummary[]>([]);
   const [selectedURL, setSelectedURL] = React.useState("");
+  const selectedURLRef = React.useRef("");
   const [selectedAnnotations, setSelectedAnnotations] = React.useState<Annotation[]>([]);
   const [libraryLoading, setLibraryLoading] = React.useState(false);
   const [libraryError, setLibraryError] = React.useState("");
@@ -64,19 +81,25 @@ function OptionsApp(): JSX.Element {
     setSyncStatus(status);
   }, []);
 
+  React.useEffect(() => {
+    selectedURLRef.current = selectedURL;
+  }, [selectedURL]);
+
   const loadURLSummaries = React.useCallback(
-    async (keepSelection = true): Promise<void> => {
+    async (keepSelection = true): Promise<string> => {
       const response = await sendRuntimeMessage<AnnotationURLSummaryResponse>({
         type: "annotation.urls",
         payload: {}
       });
+      const current = selectedURLRef.current;
+      const nextSelected =
+        keepSelection && current && response.summaries.some((item) => item.url === current)
+          ? current
+          : (response.summaries[0]?.url ?? "");
+
       setURLSummaries(response.summaries);
-      setSelectedURL((current) => {
-        if (keepSelection && current && response.summaries.some((item) => item.url === current)) {
-          return current;
-        }
-        return response.summaries[0]?.url ?? "";
-      });
+      setSelectedURL(nextSelected);
+      return nextSelected;
     },
     []
   );
@@ -114,7 +137,12 @@ function OptionsApp(): JSX.Element {
   React.useEffect(() => {
     void (async () => {
       const [syncData, localData] = await Promise.all([
-        chrome.storage.sync.get([SETTINGS_KEY_SYNC_ENABLED, SETTINGS_KEY_API_BASE]),
+        chrome.storage.sync.get([
+          SETTINGS_KEY_SYNC_ENABLED,
+          SETTINGS_KEY_API_BASE,
+          SETTINGS_KEY_TOOLBAR_OPACITY,
+          SETTINGS_KEY_TOOLBAR_WIDTH
+        ]),
         chrome.storage.local.get([AUTH_KEY_ACCESS_TOKEN, AUTH_KEY_REFRESH_TOKEN])
       ]);
 
@@ -124,6 +152,12 @@ function OptionsApp(): JSX.Element {
 
       if (typeof syncData[SETTINGS_KEY_API_BASE] === "string") {
         setAPIBaseURL(syncData[SETTINGS_KEY_API_BASE] as string);
+      }
+      if (typeof syncData[SETTINGS_KEY_TOOLBAR_OPACITY] === "number") {
+        setToolbarOpacity(clamp(syncData[SETTINGS_KEY_TOOLBAR_OPACITY] as number, TOOLBAR_OPACITY_MIN, TOOLBAR_OPACITY_MAX));
+      }
+      if (typeof syncData[SETTINGS_KEY_TOOLBAR_WIDTH] === "number") {
+        setToolbarWidth(clamp(syncData[SETTINGS_KEY_TOOLBAR_WIDTH] as number, TOOLBAR_WIDTH_MIN, TOOLBAR_WIDTH_MAX));
       }
 
       if (typeof localData[AUTH_KEY_ACCESS_TOKEN] === "string") {
@@ -147,23 +181,74 @@ function OptionsApp(): JSX.Element {
     window.location.hash = tab === "library" ? "library" : "settings";
   };
 
-  const onSave = async (): Promise<void> => {
-    await Promise.all([
-      chrome.storage.sync.set({
-        [SETTINGS_KEY_SYNC_ENABLED]: syncEnabled,
-        [SETTINGS_KEY_API_BASE]: apiBaseURL.trim()
-      }),
-      chrome.storage.local.set({
-        [AUTH_KEY_ACCESS_TOKEN]: accessToken.trim(),
-        [AUTH_KEY_REFRESH_TOKEN]: refreshToken.trim()
+  const getManifestContentScriptFiles = React.useCallback((): string[] => {
+    const manifest = chrome.runtime.getManifest();
+    const files: string[] = [];
+    for (const item of manifest.content_scripts ?? []) {
+      for (const file of item.js ?? []) {
+        if (typeof file === "string" && file.trim()) {
+          files.push(file);
+        }
+      }
+    }
+    return files;
+  }, []);
+
+  const broadcastRefreshToOpenTabs = React.useCallback(async (): Promise<void> => {
+    const tabs = await chrome.tabs.query({});
+    const contentScriptFiles = getManifestContentScriptFiles();
+    await Promise.all(
+      tabs.map(async (tab) => {
+        if (tab.id == null) {
+          return;
+        }
+        if (!tab.url || (!tab.url.startsWith("http://") && !tab.url.startsWith("https://"))) {
+          return;
+        }
+        try {
+          await chrome.tabs.sendMessage(tab.id, { type: "annotation.refreshAll", payload: {} });
+        } catch {
+          if (contentScriptFiles.length === 0) {
+            return;
+          }
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: contentScriptFiles
+            });
+            await chrome.tabs.sendMessage(tab.id, { type: "annotation.refreshAll", payload: {} });
+          } catch {
+            // Ignore tabs where script injection is not allowed or still unavailable.
+          }
+        }
       })
-    ]);
+    );
+  }, [getManifestContentScriptFiles]);
 
-    await sendRuntimeMessage({ type: "sync.now", payload: { reason: "settings-save" } });
+  const onSave = async (): Promise<void> => {
+    try {
+      await Promise.all([
+        chrome.storage.sync.set({
+          [SETTINGS_KEY_SYNC_ENABLED]: syncEnabled,
+          [SETTINGS_KEY_API_BASE]: apiBaseURL.trim(),
+          [SETTINGS_KEY_TOOLBAR_OPACITY]: clamp(toolbarOpacity, TOOLBAR_OPACITY_MIN, TOOLBAR_OPACITY_MAX),
+          [SETTINGS_KEY_TOOLBAR_WIDTH]: clamp(toolbarWidth, TOOLBAR_WIDTH_MIN, TOOLBAR_WIDTH_MAX)
+        }),
+        chrome.storage.local.set({
+          [AUTH_KEY_ACCESS_TOKEN]: accessToken.trim(),
+          [AUTH_KEY_REFRESH_TOKEN]: refreshToken.trim()
+        })
+      ]);
 
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1200);
-    await loadSyncStatus();
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "settings-save", wait: true } });
+
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1200);
+      await loadSyncStatus();
+      await broadcastRefreshToOpenTabs();
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? `保存失败: ${error.message}` : "保存失败");
+    }
   };
 
   const authByEndpoint = async (endpoint: "/register" | "/login"): Promise<void> => {
@@ -174,40 +259,51 @@ function OptionsApp(): JSX.Element {
     }
 
     setAuthMessage("认证中...");
-    const response = await fetch(`${baseURL}/api/v1/auth${endpoint}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: email.trim(),
-        password: password.trim()
-      })
-    });
+    try {
+      const response = await fetch(`${baseURL}/api/v1/auth${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim(),
+          password: password.trim()
+        })
+      });
 
-    if (!response.ok) {
-      const text = await response.text();
-      setAuthMessage(`认证失败(${response.status}): ${text}`);
-      return;
+      if (!response.ok) {
+        const text = await response.text();
+        setAuthMessage(`认证失败(${response.status}): ${text}`);
+        return;
+      }
+
+      const data = (await response.json()) as {
+        token_pair?: { access_token?: string; refresh_token?: string };
+      };
+      const nextAccess = data.token_pair?.access_token ?? "";
+      const nextRefresh = data.token_pair?.refresh_token ?? "";
+      if (!nextAccess || !nextRefresh) {
+        setAuthMessage("认证响应缺少 token");
+        return;
+      }
+
+      await chrome.storage.local.set({
+        [AUTH_KEY_ACCESS_TOKEN]: nextAccess,
+        [AUTH_KEY_REFRESH_TOKEN]: nextRefresh
+      });
+      await chrome.storage.sync.set({
+        [SETTINGS_KEY_API_BASE]: baseURL,
+        [SETTINGS_KEY_SYNC_ENABLED]: true
+      });
+      setAccessToken(nextAccess);
+      setRefreshToken(nextRefresh);
+      setAPIBaseURL(baseURL);
+      setSyncEnabled(true);
+      setAuthMessage("认证成功，token 已写入");
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "auth-success", wait: true } });
+      await Promise.all([loadSyncStatus(), loadURLSummaries(false)]);
+      await broadcastRefreshToOpenTabs();
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? `认证失败: ${error.message}` : "认证失败");
     }
-
-    const data = (await response.json()) as {
-      token_pair?: { access_token?: string; refresh_token?: string };
-    };
-    const nextAccess = data.token_pair?.access_token ?? "";
-    const nextRefresh = data.token_pair?.refresh_token ?? "";
-    if (!nextAccess || !nextRefresh) {
-      setAuthMessage("认证响应缺少 token");
-      return;
-    }
-
-    await chrome.storage.local.set({
-      [AUTH_KEY_ACCESS_TOKEN]: nextAccess,
-      [AUTH_KEY_REFRESH_TOKEN]: nextRefresh
-    });
-    setAccessToken(nextAccess);
-    setRefreshToken(nextRefresh);
-    setAuthMessage("认证成功，token 已写入");
-    await sendRuntimeMessage({ type: "sync.now", payload: { reason: "auth-success" } });
-    await Promise.all([loadSyncStatus(), loadURLSummaries(false)]);
   };
 
   const onLogout = async (): Promise<void> => {
@@ -224,19 +320,58 @@ function OptionsApp(): JSX.Element {
       }
     }
 
-    await chrome.storage.local.set({
-      [AUTH_KEY_ACCESS_TOKEN]: "",
-      [AUTH_KEY_REFRESH_TOKEN]: ""
-    });
+    const allLocal = await chrome.storage.local.get(null);
+    const annotationKeys = Object.keys(allLocal).filter((key) => key.startsWith(ANNOTATION_KEY_PREFIX));
+    const keysToRemove = [
+      AUTH_KEY_ACCESS_TOKEN,
+      AUTH_KEY_REFRESH_TOKEN,
+      SYNC_KEY_QUEUE,
+      SYNC_KEY_CONFLICTS,
+      SYNC_KEY_CURSOR,
+      SYNC_KEY_LAST_SYNC_AT,
+      SYNC_KEY_LAST_SYNC_ERROR,
+      ...annotationKeys
+    ];
+    await chrome.storage.local.remove(keysToRemove);
     setAccessToken("");
     setRefreshToken("");
+    setURLSummaries([]);
+    setSelectedURL("");
+    setSelectedAnnotations([]);
     setAuthMessage("已退出登录并清理本地 token");
     await Promise.all([loadSyncStatus(), loadURLSummaries(false)]);
+    await broadcastRefreshToOpenTabs();
   };
 
   const onRetryConflicts = async (): Promise<void> => {
-    await sendRuntimeMessage({ type: "sync.conflicts.retry", payload: {} });
-    await loadSyncStatus();
+    try {
+      await sendRuntimeMessage({ type: "sync.conflicts.retry", payload: {} });
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "options-retry-conflicts", wait: true } });
+      await Promise.all([loadSyncStatus(), loadURLSummaries(true)]);
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? `重试冲突失败: ${error.message}` : "重试冲突失败");
+    }
+  };
+
+  const onRefreshSyncStatus = async (): Promise<void> => {
+    try {
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "options-refresh-status", wait: true } });
+      await loadSyncStatus();
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? `刷新同步状态失败: ${error.message}` : "刷新同步状态失败");
+    }
+  };
+
+  const onRefreshLibrary = async (): Promise<void> => {
+    setLibraryError("");
+    try {
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "options-library-refresh", wait: true } });
+      const nextURL = await loadURLSummaries(true);
+      await loadAnnotationsByURL(nextURL);
+      await loadSyncStatus();
+    } catch (error) {
+      setLibraryError(error instanceof Error ? error.message : "刷新划词库失败");
+    }
   };
 
   return (
@@ -307,6 +442,38 @@ function OptionsApp(): JSX.Element {
                   borderRadius: 8,
                   border: "1px solid #cbd5e1"
                 }}
+              />
+            </label>
+
+            <label style={{ display: "block", marginBottom: 10 }}>
+              <div style={{ marginBottom: 6, fontWeight: 600 }}>划词弹窗透明度 ({Math.round(toolbarOpacity * 100)}%)</div>
+              <input
+                type="range"
+                min={Math.round(TOOLBAR_OPACITY_MIN * 100)}
+                max={Math.round(TOOLBAR_OPACITY_MAX * 100)}
+                step={1}
+                value={Math.round(toolbarOpacity * 100)}
+                onChange={(event) =>
+                  setToolbarOpacity(
+                    clamp(Number(event.target.value) / 100, TOOLBAR_OPACITY_MIN, TOOLBAR_OPACITY_MAX)
+                  )
+                }
+                style={{ width: "100%" }}
+              />
+            </label>
+
+            <label style={{ display: "block" }}>
+              <div style={{ marginBottom: 6, fontWeight: 600 }}>划词弹窗宽度 ({Math.round(toolbarWidth)}px)</div>
+              <input
+                type="range"
+                min={TOOLBAR_WIDTH_MIN}
+                max={TOOLBAR_WIDTH_MAX}
+                step={10}
+                value={Math.round(toolbarWidth)}
+                onChange={(event) =>
+                  setToolbarWidth(clamp(Number(event.target.value), TOOLBAR_WIDTH_MIN, TOOLBAR_WIDTH_MAX))
+                }
+                style={{ width: "100%" }}
               />
             </label>
           </section>
@@ -439,7 +606,7 @@ function OptionsApp(): JSX.Element {
                   color: "#fff",
                   cursor: "pointer"
                 }}
-                onClick={() => void loadSyncStatus()}
+                onClick={() => void onRefreshSyncStatus()}
               >
                 刷新状态
               </button>
@@ -510,10 +677,7 @@ function OptionsApp(): JSX.Element {
                 fontWeight: 700
               }}
               onClick={() => {
-                void Promise.all([
-                  loadURLSummaries(true),
-                  selectedURL ? loadAnnotationsByURL(selectedURL) : Promise.resolve()
-                ]);
+                void onRefreshLibrary();
               }}
             >
               刷新划词库

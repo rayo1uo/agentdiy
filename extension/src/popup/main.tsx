@@ -1,5 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { sendRuntimeMessage } from "@/lib/runtime";
 
 const containerStyle: React.CSSProperties = {
   width: 320,
@@ -27,7 +28,7 @@ function PopupApp(): JSX.Element {
   const openSidePanel = async (): Promise<void> => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) {
+      if (tab?.id == null) {
         setStatus("No active tab.");
         return;
       }
@@ -41,7 +42,7 @@ function PopupApp(): JSX.Element {
 
   const triggerSyncNow = async (): Promise<void> => {
     try {
-      await chrome.runtime.sendMessage({ type: "sync.now", payload: { reason: "popup-click" } });
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "popup-click" } });
       setStatus("Sync scheduled.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to schedule sync.");

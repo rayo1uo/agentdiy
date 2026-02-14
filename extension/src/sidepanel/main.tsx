@@ -7,7 +7,6 @@ import { sendRuntimeMessage } from "@/lib/runtime";
 import "./styles.css";
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
-const COLOR_OPTIONS = ["#ffe58f", "#ffd6e7", "#c7f9cc", "#bfdbfe", "#e9d5ff"] as const;
 
 const getActiveTabContext = async (): Promise<{ tabId: number | null; url: string }> => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -35,6 +34,11 @@ type SyncConflictListResponse = {
   lastSyncError: string;
 };
 
+type TabRuntimeRequest =
+  | { type: "annotation.focus"; payload: { id: string } }
+  | { type: "annotation.editComment"; payload: { id: string; url?: string } }
+  | { type: "annotation.refresh"; payload: { url: string } };
+
 const DEFAULT_SYNC_STATE: SyncPanelState = {
   queueLength: 0,
   conflictCount: 0,
@@ -57,11 +61,7 @@ function SidePanelApp(): JSX.Element {
   const [pageSize, setPageSize] = React.useState<number>(PAGE_SIZE_OPTIONS[0]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
-  const [editingAnnotation, setEditingAnnotation] = React.useState<Annotation | null>(null);
-  const [editingCommentText, setEditingCommentText] = React.useState("");
-  const [editingError, setEditingError] = React.useState("");
-  const [editingSaving, setEditingSaving] = React.useState(false);
-  const editingInputRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const [syncNowPending, setSyncNowPending] = React.useState(false);
 
   const reloadConflictDetails = React.useCallback(
     async (targetURL?: string) => {
@@ -201,86 +201,74 @@ function SidePanelApp(): JSX.Element {
     setPage(1);
   }, [url, pageSize]);
 
-  React.useEffect(() => {
-    if (!editingAnnotation) {
-      return;
-    }
-    window.setTimeout(() => {
-      editingInputRef.current?.focus();
-      editingInputRef.current?.setSelectionRange(editingCommentText.length, editingCommentText.length);
-    }, 0);
-  }, [editingAnnotation]);
+  const sendMessageToActiveTab = React.useCallback(
+    async (message: TabRuntimeRequest): Promise<boolean> => {
+      if (tabID === null) {
+        setError("当前标签页不可用");
+        return false;
+      }
 
-  React.useEffect(() => {
-    setEditingAnnotation(null);
-    setEditingCommentText("");
-    setEditingError("");
-    setEditingSaving(false);
-  }, [url]);
+      try {
+        await chrome.tabs.sendMessage(tabID, message);
+        return true;
+      } catch (sendError) {
+        const messageText =
+          sendError instanceof Error && sendError.message
+            ? sendError.message
+            : "当前页面暂不支持该操作，请刷新网页后重试";
+        setError(messageText);
+        return false;
+      }
+    },
+    [tabID]
+  );
 
   const onFocus = async (id: string): Promise<void> => {
-    if (!tabID) {
-      return;
-    }
-
-    await chrome.tabs.sendMessage(tabID, {
+    setError("");
+    await sendMessageToActiveTab({
       type: "annotation.focus",
       payload: { id }
     });
   };
 
   const onEdit = async (annotation: Annotation): Promise<void> => {
-    setEditingAnnotation(annotation);
-    setEditingCommentText(annotation.commentText ?? "");
-    setEditingError("");
-    setEditingSaving(false);
-  };
-
-  const onSaveEditedComment = async (): Promise<void> => {
-    if (!editingAnnotation || editingSaving) {
-      return;
-    }
-
-    setEditingSaving(true);
-    setEditingError("");
-    try {
-      await sendRuntimeMessage({
-        type: "annotation.updateComment",
-        payload: { url, id: editingAnnotation.id, commentText: editingCommentText }
-      });
-      await reload();
-      if (tabID) {
-        await chrome.tabs.sendMessage(tabID, {
-          type: "annotation.refresh",
-          payload: { url }
-        });
-      }
-      setEditingAnnotation(null);
-      setEditingCommentText("");
-    } catch (updateError) {
-      setEditingError(updateError instanceof Error ? updateError.message : "保存评论失败");
-    } finally {
-      setEditingSaving(false);
-    }
+    setError("");
+    await sendMessageToActiveTab({
+      type: "annotation.editComment",
+      payload: { id: annotation.id, url }
+    });
   };
 
   const onDelete = async (annotation: Annotation): Promise<void> => {
-    await sendRuntimeMessage({
-      type: "annotation.delete",
-      payload: { url, id: annotation.id }
-    });
-    await reload();
-    if (tabID) {
-      await chrome.tabs.sendMessage(tabID, {
+    setError("");
+    try {
+      await sendRuntimeMessage({
+        type: "annotation.delete",
+        payload: { url, id: annotation.id }
+      });
+      await reload();
+      await sendMessageToActiveTab({
         type: "annotation.refresh",
         payload: { url }
       });
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "删除失败");
     }
   };
 
   const onSyncNow = async (): Promise<void> => {
-    await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel" } });
-    await reloadSyncState();
+    if (syncNowPending) {
+      return;
+    }
+    setSyncNowPending(true);
+    try {
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel", wait: true } });
+      await reload();
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : "同步失败");
+    } finally {
+      setSyncNowPending(false);
+    }
   };
 
   const openLoginSettings = async (): Promise<void> => {
@@ -299,13 +287,18 @@ function SidePanelApp(): JSX.Element {
     if (syncState.conflictOpIDs.length === 0) {
       return;
     }
-    await sendRuntimeMessage({
-      type: "sync.conflicts.retry",
-      payload: { opIds: syncState.conflictOpIDs }
-    });
-    await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel-retry-page-conflicts" } });
-    await reloadSyncState();
-    await reload();
+    setError("");
+    try {
+      await sendRuntimeMessage({
+        type: "sync.conflicts.retry",
+        payload: { opIds: syncState.conflictOpIDs }
+      });
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel-retry-page-conflicts", wait: true } });
+      await reloadSyncState();
+      await reload();
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : "重试冲突失败");
+    }
   };
 
   const onRetryAnnotationConflicts = async (annotationID: string): Promise<void> => {
@@ -313,36 +306,56 @@ function SidePanelApp(): JSX.Element {
     if (opIDs.length === 0) {
       return;
     }
-    await sendRuntimeMessage({
-      type: "sync.conflicts.retry",
-      payload: { opIds: opIDs }
-    });
-    await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel-retry-annotation-conflicts" } });
-    await reloadSyncState();
-    await reload();
+    setError("");
+    try {
+      await sendRuntimeMessage({
+        type: "sync.conflicts.retry",
+        payload: { opIds: opIDs }
+      });
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel-retry-annotation-conflicts", wait: true } });
+      await reloadSyncState();
+      await reload();
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : "重试该条冲突失败");
+    }
   };
 
   const onRetrySingleConflict = async (opID: string): Promise<void> => {
-    await sendRuntimeMessage({ type: "sync.conflicts.retry", payload: { opIds: [opID] } });
-    await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel-retry-single-conflict" } });
-    await reloadSyncState();
-    await reload();
+    setError("");
+    try {
+      await sendRuntimeMessage({ type: "sync.conflicts.retry", payload: { opIds: [opID] } });
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel-retry-single-conflict", wait: true } });
+      await reloadSyncState();
+      await reload();
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : "重试冲突失败");
+    }
   };
 
   const onIgnoreSingleConflict = async (opID: string): Promise<void> => {
-    await sendRuntimeMessage({ type: "sync.conflicts.remove", payload: { opIds: [opID] } });
-    await reloadSyncState();
+    setError("");
+    try {
+      await sendRuntimeMessage({ type: "sync.conflicts.remove", payload: { opIds: [opID] } });
+      await reloadSyncState();
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : "忽略冲突失败");
+    }
   };
 
   const onIgnorePageConflicts = async (): Promise<void> => {
     if (syncState.conflictOpIDs.length === 0) {
       return;
     }
-    await sendRuntimeMessage({
-      type: "sync.conflicts.remove",
-      payload: { opIds: syncState.conflictOpIDs }
-    });
-    await reloadSyncState();
+    setError("");
+    try {
+      await sendRuntimeMessage({
+        type: "sync.conflicts.remove",
+        payload: { opIds: syncState.conflictOpIDs }
+      });
+      await reloadSyncState();
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : "忽略冲突失败");
+    }
   };
 
   const onRetryConflictGroup = async (message: string): Promise<void> => {
@@ -350,10 +363,15 @@ function SidePanelApp(): JSX.Element {
     if (opIDs.length === 0) {
       return;
     }
-    await sendRuntimeMessage({ type: "sync.conflicts.retry", payload: { opIds: opIDs } });
-    await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel-retry-conflict-group" } });
-    await reloadSyncState();
-    await reload();
+    setError("");
+    try {
+      await sendRuntimeMessage({ type: "sync.conflicts.retry", payload: { opIds: opIDs } });
+      await sendRuntimeMessage({ type: "sync.now", payload: { reason: "sidepanel-retry-conflict-group", wait: true } });
+      await reloadSyncState();
+      await reload();
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : "重试同类冲突失败");
+    }
   };
 
   const onIgnoreConflictGroup = async (message: string): Promise<void> => {
@@ -361,8 +379,13 @@ function SidePanelApp(): JSX.Element {
     if (opIDs.length === 0) {
       return;
     }
-    await sendRuntimeMessage({ type: "sync.conflicts.remove", payload: { opIds: opIDs } });
-    await reloadSyncState();
+    setError("");
+    try {
+      await sendRuntimeMessage({ type: "sync.conflicts.remove", payload: { opIds: opIDs } });
+      await reloadSyncState();
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : "忽略同类冲突失败");
+    }
   };
 
   const pendingSet = React.useMemo(() => new Set(syncState.pendingAnnotationIDs), [syncState.pendingAnnotationIDs]);
@@ -436,8 +459,8 @@ function SidePanelApp(): JSX.Element {
               冲突: {syncState.conflictCount}
             </span>
           </div>
-          <button className="sp-btn sp-btn-primary sp-sync-now" onClick={() => void onSyncNow()}>
-            立即同步
+          <button className="sp-btn sp-btn-primary sp-sync-now" onClick={() => void onSyncNow()} disabled={syncNowPending}>
+            {syncNowPending ? "同步中..." : "立即同步"}
           </button>
         </div>
         <div className="sp-sync-actions">
@@ -581,79 +604,6 @@ function SidePanelApp(): JSX.Element {
         );
       })}
 
-      {editingAnnotation ? (
-        <div
-          className="sp-editor-overlay"
-          onClick={() => {
-            if (!editingSaving) {
-              setEditingAnnotation(null);
-            }
-          }}
-        >
-          <div
-            className="sp-editor-dialog"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-label="高亮与评论"
-          >
-            <div className="sp-editor-title">高亮与评论</div>
-            <div className="sp-editor-subtitle">编辑评论</div>
-            <div className="sp-editor-color-row" aria-hidden>
-              {COLOR_OPTIONS.map((color) => (
-                <span
-                  key={color}
-                  className={`sp-editor-color-dot ${editingAnnotation.color === color ? "is-active" : ""}`}
-                  style={{ backgroundColor: color }}
-                />
-              ))}
-            </div>
-            <div
-              className="sp-editor-quote"
-              style={
-                {
-                  "--sp-quote-color": editingAnnotation.color
-                } as React.CSSProperties
-              }
-            >
-              {editingAnnotation.quoteText}
-            </div>
-            <textarea
-              ref={editingInputRef}
-              className="sp-editor-input"
-              rows={4}
-              value={editingCommentText}
-              placeholder="请输入评论（可为空）"
-              onChange={(event) => setEditingCommentText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" && !editingSaving) {
-                  event.preventDefault();
-                  setEditingAnnotation(null);
-                }
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void onSaveEditedComment();
-                }
-              }}
-            />
-            {editingError ? <div className="sp-error-text">{editingError}</div> : null}
-            <div className="sp-editor-actions">
-              <button
-                className="sp-btn"
-                disabled={editingSaving}
-                onClick={() => {
-                  setEditingAnnotation(null);
-                }}
-              >
-                取消
-              </button>
-              <button className="sp-btn sp-btn-primary" disabled={editingSaving} onClick={() => void onSaveEditedComment()}>
-                {editingSaving ? "保存中..." : "保存评论"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </main>
   );
 }

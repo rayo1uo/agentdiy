@@ -1,17 +1,31 @@
-import { DEFAULT_HIGHLIGHT_COLOR, type Annotation, type AnnotationCreateInput } from "@/shared/annotation";
+import {
+  DEFAULT_HIGHLIGHT_COLOR,
+  HIGHLIGHT_COLOR_OPTIONS,
+  type Annotation,
+  type AnnotationCreateInput
+} from "@/shared/annotation";
 import type { AnnotationChangedEvent, AnnotationListResponse, RuntimeRequest } from "@/shared/messages";
 import { sendRuntimeMessage } from "@/lib/runtime";
-import { extractPosition, focusAnnotation, renderAnnotations } from "./highlight";
+import { extractPosition, focusAnnotation, getQuoteContextByOffsets, renderAnnotations } from "./highlight";
 import "./styles.css";
 
 const TOOLBAR_CLASS = "annota-toolbar";
-const COLOR_OPTIONS = ["#ffe58f", "#ffd6e7", "#c7f9cc", "#bfdbfe", "#e9d5ff"];
 const TOOLBAR_GAP = 8;
 const VIEWPORT_MARGIN = 8;
 const RENDER_RETRY_DELAYS_MS = [300, 900, 1800, 3200] as const;
 const FOCUS_RETRY_DELAYS_MS = [200, 600, 1200, 2200] as const;
 const DOM_OBSERVER_WINDOW_MS = 15000;
 const DOM_RENDER_DEBOUNCE_MS = 180;
+const SETTINGS_KEY_TOOLBAR_OPACITY = "settings:toolbarOpacity";
+const SETTINGS_KEY_TOOLBAR_WIDTH = "settings:toolbarWidth";
+const SETTINGS_KEY_API_BASE = "settings:apiBaseUrl";
+const AUTH_KEY_ACCESS_TOKEN = "auth:accessToken";
+const AUTH_KEY_REFRESH_TOKEN = "auth:refreshToken";
+const TOOLBAR_OPACITY_MIN = 0.55;
+const TOOLBAR_OPACITY_MAX = 1;
+const TOOLBAR_WIDTH_MIN = 240;
+const TOOLBAR_WIDTH_MAX = 520;
+const STORAGE_REFRESH_DEBOUNCE_MS = 180;
 
 type SelectionDraft = {
   quoteText: string;
@@ -21,6 +35,11 @@ type SelectionDraft = {
   endOffset: number;
 };
 
+type ToolbarPreferences = {
+  opacity: number;
+  width: number;
+};
+
 let toolbar: HTMLDivElement | null = null;
 let activeDraft: SelectionDraft | null = null;
 let latestAnnotations: Annotation[] = [];
@@ -28,33 +47,59 @@ let renderRetryTimers: number[] = [];
 let mutationObserver: MutationObserver | null = null;
 let mutationObserverStopTimer: number | null = null;
 let mutationRenderTimer: number | null = null;
+let storageRefreshTimer: number | null = null;
+let toolbarPreferences: ToolbarPreferences = {
+  opacity: 0.92,
+  width: 320
+};
 
 const currentURL = (): string => window.location.href;
 const pageTitle = (): string => document.title;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-const getQuoteContext = (selectedText: string): { prefixText: string; suffixText: string } => {
-  const bodyText = document.body.innerText || "";
-  const index = bodyText.indexOf(selectedText);
-
-  if (index < 0) {
-    return { prefixText: "", suffixText: "" };
-  }
-
-  const contextLength = 32;
-  const prefixStart = Math.max(0, index - contextLength);
-  const suffixEnd = Math.min(bodyText.length, index + selectedText.length + contextLength);
-
-  return {
-    prefixText: bodyText.slice(prefixStart, index),
-    suffixText: bodyText.slice(index + selectedText.length, suffixEnd)
-  };
-};
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 const hideToolbar = (): void => {
   toolbar?.remove();
   toolbar = null;
   activeDraft = null;
+};
+
+const applyToolbarPreferences = (element: HTMLDivElement): void => {
+  element.style.setProperty("--annota-toolbar-opacity", toolbarPreferences.opacity.toFixed(2));
+  element.style.setProperty("--annota-toolbar-width", `${Math.round(toolbarPreferences.width)}px`);
+};
+
+const loadToolbarPreferences = async (): Promise<void> => {
+  const data = await chrome.storage.sync.get([SETTINGS_KEY_TOOLBAR_OPACITY, SETTINGS_KEY_TOOLBAR_WIDTH]);
+  const opacityValue = data[SETTINGS_KEY_TOOLBAR_OPACITY];
+  const widthValue = data[SETTINGS_KEY_TOOLBAR_WIDTH];
+
+  if (typeof opacityValue === "number") {
+    toolbarPreferences.opacity = clamp(opacityValue, TOOLBAR_OPACITY_MIN, TOOLBAR_OPACITY_MAX);
+  }
+  if (typeof widthValue === "number") {
+    toolbarPreferences.width = clamp(widthValue, TOOLBAR_WIDTH_MIN, TOOLBAR_WIDTH_MAX);
+  }
+};
+
+const onToolbarPreferenceChanged = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string): void => {
+  if (areaName !== "sync") {
+    return;
+  }
+
+  const opacityChange = changes[SETTINGS_KEY_TOOLBAR_OPACITY];
+  if (opacityChange && typeof opacityChange.newValue === "number") {
+    toolbarPreferences.opacity = clamp(opacityChange.newValue, TOOLBAR_OPACITY_MIN, TOOLBAR_OPACITY_MAX);
+  }
+
+  const widthChange = changes[SETTINGS_KEY_TOOLBAR_WIDTH];
+  if (widthChange && typeof widthChange.newValue === "number") {
+    toolbarPreferences.width = clamp(widthChange.newValue, TOOLBAR_WIDTH_MIN, TOOLBAR_WIDTH_MAX);
+  }
+
+  if (toolbar) {
+    applyToolbarPreferences(toolbar);
+  }
 };
 
 const getCurrentSelectionRange = (): Range | null => {
@@ -77,6 +122,40 @@ const clearRenderRetryTimers = (): void => {
     window.clearTimeout(timerID);
   }
   renderRetryTimers = [];
+};
+
+const scheduleStorageDrivenRefresh = (): void => {
+  if (storageRefreshTimer !== null) {
+    window.clearTimeout(storageRefreshTimer);
+  }
+  storageRefreshTimer = window.setTimeout(() => {
+    storageRefreshTimer = null;
+    void refreshAnnotations();
+  }, STORAGE_REFRESH_DEBOUNCE_MS);
+};
+
+const onExtensionStorageChanged = (
+  changes: { [key: string]: chrome.storage.StorageChange },
+  areaName: string
+): void => {
+  onToolbarPreferenceChanged(changes, areaName);
+
+  if (areaName === "sync" && changes[SETTINGS_KEY_API_BASE]) {
+    scheduleStorageDrivenRefresh();
+    return;
+  }
+
+  if (areaName !== "local") {
+    return;
+  }
+
+  const authChanged = Boolean(changes[AUTH_KEY_ACCESS_TOKEN] || changes[AUTH_KEY_REFRESH_TOKEN]);
+  const currentAnnotationKey = `annotations:${currentURL()}`;
+  const currentURLAnnotationsChanged = Object.prototype.hasOwnProperty.call(changes, currentAnnotationKey);
+
+  if (authChanged || currentURLAnnotationsChanged) {
+    scheduleStorageDrivenRefresh();
+  }
 };
 
 const stopMutationObserver = (): void => {
@@ -215,6 +294,20 @@ const createAnnotation = async (
   await refreshAnnotations();
 };
 
+const updateAnnotationComment = async (annotationID: string, commentText: string): Promise<void> => {
+  await sendRuntimeMessage<Annotation>({
+    type: "annotation.updateComment",
+    payload: {
+      url: currentURL(),
+      id: annotationID,
+      commentText
+    }
+  });
+
+  hideToolbar();
+  await refreshAnnotations();
+};
+
 const buildActionButton = (label: string, kind: "primary" | "ghost", onClick: () => Promise<void>): HTMLButtonElement => {
   const button = document.createElement("button");
   button.type = "button";
@@ -261,7 +354,42 @@ const computeToolbarPosition = (
   return { top, left };
 };
 
-const showToolbar = (range: Range): void => {
+const buildColorRow = (selectedColor: string, onSelect?: (value: string) => void): HTMLDivElement => {
+  const colorRow = document.createElement("div");
+  colorRow.className = "annota-color-row";
+
+  const applySelectedColor = (): void => {
+    colorRow.querySelectorAll<HTMLButtonElement>(".annota-color-btn").forEach((button) => {
+      button.dataset.active = button.dataset.color === selectedColor ? "true" : "false";
+    });
+  };
+
+  for (const color of HIGHLIGHT_COLOR_OPTIONS) {
+    const colorButton = document.createElement("button");
+    colorButton.type = "button";
+    colorButton.className = "annota-color-btn";
+    colorButton.dataset.color = color;
+    colorButton.setAttribute("aria-label", `选择颜色 ${color}`);
+    colorButton.style.backgroundColor = color;
+    colorButton.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+    colorButton.addEventListener("click", () => {
+      if (!onSelect) {
+        return;
+      }
+      onSelect(color);
+      selectedColor = color;
+      applySelectedColor();
+    });
+    colorRow.appendChild(colorButton);
+  }
+  applySelectedColor();
+
+  return colorRow;
+};
+
+const showCreateToolbar = (range: Range): void => {
   hideToolbar();
 
   const rect = range.getBoundingClientRect();
@@ -276,7 +404,7 @@ const showToolbar = (range: Range): void => {
     return;
   }
 
-  const { prefixText, suffixText } = getQuoteContext(selectedText);
+  const { prefixText, suffixText } = getQuoteContextByOffsets(position.startOffset, position.endOffset);
   activeDraft = {
     quoteText: selectedText,
     prefixText,
@@ -287,6 +415,7 @@ const showToolbar = (range: Range): void => {
 
   const nextToolbar = document.createElement("div");
   nextToolbar.className = TOOLBAR_CLASS;
+  applyToolbarPreferences(nextToolbar);
   nextToolbar.addEventListener("mouseup", (event) => {
     event.stopPropagation();
   });
@@ -295,33 +424,10 @@ const showToolbar = (range: Range): void => {
   heading.className = "annota-toolbar-title";
   heading.textContent = "高亮与评论";
 
-  const colorRow = document.createElement("div");
-  colorRow.className = "annota-color-row";
-  let selectedColor = DEFAULT_HIGHLIGHT_COLOR;
-
-  const applySelectedColor = (): void => {
-    colorRow.querySelectorAll<HTMLButtonElement>(".annota-color-btn").forEach((button) => {
-      button.dataset.active = button.dataset.color === selectedColor ? "true" : "false";
-    });
-  };
-
-  for (const color of COLOR_OPTIONS) {
-    const colorButton = document.createElement("button");
-    colorButton.type = "button";
-    colorButton.className = "annota-color-btn";
-    colorButton.dataset.color = color;
-    colorButton.setAttribute("aria-label", `选择颜色 ${color}`);
-    colorButton.style.backgroundColor = color;
-    colorButton.addEventListener("mousedown", (event) => {
-      event.preventDefault();
-    });
-    colorButton.addEventListener("click", () => {
-      selectedColor = color;
-      applySelectedColor();
-    });
-    colorRow.appendChild(colorButton);
-  }
-  applySelectedColor();
+  let selectedColor: string = DEFAULT_HIGHLIGHT_COLOR;
+  const colorRow = buildColorRow(selectedColor, (color) => {
+    selectedColor = color;
+  });
 
   const commentInput = document.createElement("textarea");
   commentInput.className = "annota-comment-input";
@@ -355,6 +461,8 @@ const showToolbar = (range: Range): void => {
     highlightOnlyButton.textContent = "保存中...";
     try {
       await createAnnotation(activeDraft, { color: selectedColor, commentText: "" });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "保存高亮失败");
     } finally {
       highlightOnlyButton.disabled = false;
       saveCommentButton.disabled = false;
@@ -377,6 +485,8 @@ const showToolbar = (range: Range): void => {
     saveCommentButton.textContent = "保存中...";
     try {
       await createAnnotation(activeDraft, { color: selectedColor, commentText: comment });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "保存评论失败");
     } finally {
       highlightOnlyButton.disabled = false;
       saveCommentButton.disabled = false;
@@ -417,6 +527,166 @@ const showToolbar = (range: Range): void => {
   toolbar = nextToolbar;
 };
 
+const escapeForAttributeSelector = (value: string): string => {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/"/g, '\\"');
+};
+
+const findAnnotationAnchorRect = (annotationID: string): DOMRect | null => {
+  const escaped = escapeForAttributeSelector(annotationID);
+  const elements = Array.from(document.querySelectorAll<HTMLElement>(`[data-anno-id="${escaped}"]`));
+  for (const element of elements) {
+    const rect = element.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      return rect;
+    }
+  }
+  return null;
+};
+
+const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
+  hideToolbar();
+
+  const nextToolbar = document.createElement("div");
+  nextToolbar.className = TOOLBAR_CLASS;
+  applyToolbarPreferences(nextToolbar);
+
+  const heading = document.createElement("div");
+  heading.className = "annota-toolbar-title";
+  heading.textContent = "高亮与评论";
+
+  const subtitle = document.createElement("div");
+  subtitle.className = "annota-toolbar-subtitle";
+  subtitle.textContent = "编辑评论";
+
+  const colorRow = buildColorRow(annotation.color);
+
+  const quotePreview = document.createElement("div");
+  quotePreview.className = "annota-edit-quote";
+  quotePreview.style.setProperty("--annota-highlight-color", annotation.color);
+  quotePreview.textContent = annotation.quoteText;
+
+  const commentInput = document.createElement("textarea");
+  commentInput.className = "annota-comment-input";
+  commentInput.placeholder = "请输入评论（可为空）";
+  commentInput.value = annotation.commentText ?? "";
+  commentInput.rows = 4;
+
+  const errorText = document.createElement("div");
+  errorText.className = "annota-toolbar-error";
+  errorText.hidden = true;
+
+  const setError = (message: string): void => {
+    errorText.textContent = message;
+    errorText.hidden = message.trim() === "";
+  };
+
+  let saving = false;
+  const actionRow = document.createElement("div");
+  actionRow.className = "annota-action-row";
+
+  const cancelButton = buildActionButton("取消", "ghost", async () => {
+    if (saving) {
+      return;
+    }
+    hideToolbar();
+  });
+
+  const saveButton = buildActionButton("保存评论", "primary", async () => {
+    if (saving) {
+      return;
+    }
+    saving = true;
+    setError("");
+    cancelButton.disabled = true;
+    saveButton.disabled = true;
+    const previous = saveButton.textContent;
+    saveButton.textContent = "保存中...";
+    try {
+      await updateAnnotationComment(annotation.id, commentInput.value);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "保存评论失败");
+    } finally {
+      saving = false;
+      cancelButton.disabled = false;
+      saveButton.disabled = false;
+      saveButton.textContent = previous;
+    }
+  });
+
+  commentInput.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      void cancelButton.click();
+      return;
+    }
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void saveButton.click();
+    }
+  });
+
+  actionRow.append(cancelButton, saveButton);
+  nextToolbar.append(heading, subtitle, colorRow, quotePreview, commentInput, errorText, actionRow);
+  document.body.appendChild(nextToolbar);
+
+  const { top, left } = computeToolbarPosition(anchorRect, nextToolbar);
+  nextToolbar.style.top = `${top}px`;
+  nextToolbar.style.left = `${left}px`;
+
+  toolbar = nextToolbar;
+  window.setTimeout(() => {
+    commentInput.focus();
+    const length = commentInput.value.length;
+    commentInput.setSelectionRange(length, length);
+  }, 0);
+};
+
+const openEditCommentForAnnotation = async (annotationID: string): Promise<void> => {
+  if (latestAnnotations.length === 0) {
+    try {
+      await refreshAnnotations();
+    } catch {
+      return;
+    }
+  }
+
+  let target = latestAnnotations.find((item) => item.id === annotationID) ?? null;
+  if (!target) {
+    try {
+      await refreshAnnotations();
+      target = latestAnnotations.find((item) => item.id === annotationID) ?? null;
+    } catch {
+      return;
+    }
+  }
+  if (!target) {
+    return;
+  }
+
+  let rect = findAnnotationAnchorRect(annotationID);
+  if (!rect) {
+    await focusAnnotationWithRecovery(annotationID);
+    await sleep(80);
+    rect = findAnnotationAnchorRect(annotationID);
+  }
+  if (!rect) {
+    try {
+      await refreshAnnotations();
+    } catch {
+      return;
+    }
+    rect = findAnnotationAnchorRect(annotationID);
+  }
+  if (!rect) {
+    return;
+  }
+
+  showEditToolbar(target, rect);
+};
+
 const selectionHandler = (event: MouseEvent): void => {
   const target = event.target as HTMLElement | null;
   if (toolbar && target && target.closest(`.${TOOLBAR_CLASS}`)) {
@@ -429,7 +699,7 @@ const selectionHandler = (event: MouseEvent): void => {
     return;
   }
 
-  showToolbar(range);
+  showCreateToolbar(range);
 };
 
 const onRuntimeMessage = (message: RuntimeRequest | AnnotationChangedEvent): void => {
@@ -443,8 +713,21 @@ const onRuntimeMessage = (message: RuntimeRequest | AnnotationChangedEvent): voi
     return;
   }
 
+  if (message.type === "annotation.refreshAll") {
+    void refreshAnnotations();
+    return;
+  }
+
   if (message.type === "annotation.focus") {
     void focusAnnotationWithRecovery(message.payload.id);
+    return;
+  }
+
+  if (message.type === "annotation.editComment") {
+    if (message.payload.url && message.payload.url !== currentURL()) {
+      return;
+    }
+    void openEditCommentForAnnotation(message.payload.id);
   }
 };
 
@@ -460,6 +743,9 @@ const bootstrap = async (): Promise<void> => {
   chrome.runtime.onMessage.addListener((message) => {
     onRuntimeMessage(message as RuntimeRequest | AnnotationChangedEvent);
   });
+  chrome.storage.onChanged.addListener(onExtensionStorageChanged);
+
+  await loadToolbarPreferences();
 
   try {
     await refreshAnnotations();
