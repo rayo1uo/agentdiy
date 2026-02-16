@@ -7,6 +7,18 @@ interface TextBoundary {
   offset: number;
 }
 
+interface TextNodeEntry {
+  node: Text;
+  text: string;
+  start: number;
+  end: number;
+}
+
+interface TextSnapshot {
+  entries: TextNodeEntry[];
+  fullText: string;
+}
+
 interface RGBColor {
   r: number;
   g: number;
@@ -45,23 +57,37 @@ const walkTextNodes = (root: Node, options?: { excludeHighlights?: boolean }): T
   return nodes;
 };
 
-const flattenDocumentText = (): string =>
-  walkTextNodes(document.body, { excludeHighlights: false }).map((node) => node.textContent ?? "").join("");
+const buildTextSnapshot = (options?: { excludeHighlights?: boolean }): TextSnapshot => {
+  const textNodes = walkTextNodes(document.body, options);
+  const entries: TextNodeEntry[] = [];
+  let cursor = 0;
+  let fullText = "";
+
+  for (const node of textNodes) {
+    const text = node.textContent ?? "";
+    if (text.length === 0) {
+      continue;
+    }
+
+    const start = cursor;
+    cursor += text.length;
+    entries.push({ node, text, start, end: cursor });
+    fullText += text;
+  }
+
+  return { entries, fullText };
+};
 
 export const extractPosition = (range: Range): { startOffset: number; endOffset: number } | null => {
   // Offsets must be based on full page text. Excluding already-highlighted text
   // would shift all later annotations on the same page.
-  const textNodes = walkTextNodes(document.body, { excludeHighlights: false });
-  let cursor = 0;
+  const snapshot = buildTextSnapshot({ excludeHighlights: false });
   let startOffset = -1;
   let endOffset = -1;
 
-  for (const textNode of textNodes) {
-    const textLength = textNode.textContent?.length ?? 0;
-    if (textLength === 0) {
-      continue;
-    }
-
+  for (const entry of snapshot.entries) {
+    const textNode = entry.node;
+    const textLength = entry.text.length;
     if (range.intersectsNode(textNode)) {
       let startInNode = 0;
       let endInNode = textLength;
@@ -75,13 +101,11 @@ export const extractPosition = (range: Range): { startOffset: number; endOffset:
 
       if (endInNode > startInNode) {
         if (startOffset < 0) {
-          startOffset = cursor + startInNode;
+          startOffset = entry.start + startInNode;
         }
-        endOffset = cursor + endInNode;
+        endOffset = entry.start + endInNode;
       }
     }
-
-    cursor += textLength;
   }
 
   if (startOffset < 0 || endOffset < 0 || endOffset <= startOffset) {
@@ -91,30 +115,58 @@ export const extractPosition = (range: Range): { startOffset: number; endOffset:
   return { startOffset, endOffset };
 };
 
-const locateTextBoundary = (offset: number): TextBoundary | null => {
-  const textNodes = walkTextNodes(document.body, { excludeHighlights: false });
-  let cursor = 0;
+const locateTextBoundary = (
+  snapshot: TextSnapshot,
+  offset: number,
+  options?: { preferNextAtBoundary?: boolean }
+): TextBoundary | null => {
+  if (snapshot.entries.length === 0) {
+    return null;
+  }
 
-  for (const textNode of textNodes) {
-    const textLength = textNode.textContent?.length ?? 0;
-    const nextCursor = cursor + textLength;
+  const fullLength = snapshot.fullText.length;
+  const clampedOffset = Math.max(0, Math.min(offset, fullLength));
 
-    if (offset <= nextCursor) {
+  for (let i = 0; i < snapshot.entries.length; i += 1) {
+    const entry = snapshot.entries[i];
+    if (clampedOffset < entry.end) {
       return {
-        node: textNode,
-        offset: Math.max(0, Math.min(offset - cursor, textLength))
+        node: entry.node,
+        offset: clampedOffset - entry.start
       };
     }
 
-    cursor = nextCursor;
+    if (clampedOffset === entry.end) {
+      if (options?.preferNextAtBoundary) {
+        const nextEntry = snapshot.entries[i + 1];
+        if (nextEntry) {
+          return {
+            node: nextEntry.node,
+            offset: 0
+          };
+        }
+      }
+      return {
+        node: entry.node,
+        offset: entry.text.length
+      };
+    }
   }
 
-  return null;
+  const lastEntry = snapshot.entries[snapshot.entries.length - 1];
+  return {
+    node: lastEntry.node,
+    offset: lastEntry.text.length
+  };
 };
 
-const createRangeByOffsets = (startOffset: number, endOffset: number): Range | null => {
-  const startBoundary = locateTextBoundary(startOffset);
-  const endBoundary = locateTextBoundary(endOffset);
+const createRangeByOffsets = (snapshot: TextSnapshot, startOffset: number, endOffset: number): Range | null => {
+  if (endOffset <= startOffset) {
+    return null;
+  }
+
+  const startBoundary = locateTextBoundary(snapshot, startOffset, { preferNextAtBoundary: true });
+  const endBoundary = locateTextBoundary(snapshot, endOffset, { preferNextAtBoundary: false });
 
   if (!startBoundary || !endBoundary) {
     return null;
@@ -128,6 +180,126 @@ const createRangeByOffsets = (startOffset: number, endOffset: number): Range | n
   }
 
   return range;
+};
+
+const normalizeTextForMatch = (value: string): string => value.replace(/\s+/g, " ").trim();
+
+const rangeMatchesQuote = (range: Range, quoteText: string): boolean => {
+  const expected = normalizeTextForMatch(quoteText);
+  if (!expected) {
+    return true;
+  }
+  return normalizeTextForMatch(range.toString()) === expected;
+};
+
+const countCommonPrefixLength = (left: string, right: string): number => {
+  const limit = Math.min(left.length, right.length);
+  let count = 0;
+  while (count < limit && left[count] === right[count]) {
+    count += 1;
+  }
+  return count;
+};
+
+const countCommonSuffixLength = (left: string, right: string): number => {
+  const leftLength = left.length;
+  const rightLength = right.length;
+  const limit = Math.min(leftLength, rightLength);
+  let count = 0;
+  while (count < limit && left[leftLength - 1 - count] === right[rightLength - 1 - count]) {
+    count += 1;
+  }
+  return count;
+};
+
+const findOccurrences = (text: string, keyword: string, maxCandidates = 2048): number[] => {
+  if (!keyword || text.length === 0 || keyword.length > text.length) {
+    return [];
+  }
+
+  const indices: number[] = [];
+  let fromIndex = 0;
+
+  while (indices.length < maxCandidates) {
+    const index = text.indexOf(keyword, fromIndex);
+    if (index < 0) {
+      break;
+    }
+    indices.push(index);
+    fromIndex = index + 1;
+  }
+
+  return indices;
+};
+
+const scoreOccurrence = (
+  startOffset: number,
+  endOffset: number,
+  annotation: Annotation,
+  fullText: string
+): number => {
+  let score = 0;
+  const prefix = annotation.prefixText ?? "";
+  const suffix = annotation.suffixText ?? "";
+
+  if (prefix.length > 0) {
+    const actualPrefix = fullText.slice(Math.max(0, startOffset - prefix.length), startOffset);
+    const matchedPrefix = countCommonSuffixLength(actualPrefix, prefix);
+    score += matchedPrefix * 3;
+    if (matchedPrefix === prefix.length) {
+      score += 48;
+    }
+  }
+
+  if (suffix.length > 0) {
+    const actualSuffix = fullText.slice(endOffset, endOffset + suffix.length);
+    const matchedSuffix = countCommonPrefixLength(actualSuffix, suffix);
+    score += matchedSuffix * 3;
+    if (matchedSuffix === suffix.length) {
+      score += 48;
+    }
+  }
+
+  const distance = Math.abs(startOffset - annotation.startOffset);
+  score -= distance / 120;
+  return score;
+};
+
+const resolveRangeByTextAnchor = (annotation: Annotation, snapshot: TextSnapshot): Range | null => {
+  const quote = annotation.quoteText ?? "";
+  if (!quote) {
+    return null;
+  }
+
+  const matches = findOccurrences(snapshot.fullText, quote);
+  if (matches.length === 0) {
+    return null;
+  }
+
+  let bestStart = matches[0];
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const start of matches) {
+    const end = start + quote.length;
+    const score = scoreOccurrence(start, end, annotation, snapshot.fullText);
+    if (score > bestScore) {
+      bestScore = score;
+      bestStart = start;
+    }
+  }
+
+  const resolvedRange = createRangeByOffsets(snapshot, bestStart, bestStart + quote.length);
+  if (!resolvedRange || !rangeMatchesQuote(resolvedRange, quote)) {
+    return null;
+  }
+  return resolvedRange;
+};
+
+const resolveAnnotationRange = (annotation: Annotation, snapshot: TextSnapshot): Range | null => {
+  const offsetRange = createRangeByOffsets(snapshot, annotation.startOffset, annotation.endOffset);
+  if (offsetRange && rangeMatchesQuote(offsetRange, annotation.quoteText)) {
+    return offsetRange;
+  }
+  return resolveRangeByTextAnchor(annotation, snapshot);
 };
 
 type RangeTextSegment = {
@@ -285,9 +457,10 @@ export const clearHighlights = (): void => {
 export const renderAnnotations = (annotations: Annotation[]): Annotation[] => {
   clearHighlights();
   const rendered: Annotation[] = [];
+  const snapshot = buildTextSnapshot({ excludeHighlights: false });
 
   for (const annotation of annotations) {
-    const range = createRangeByOffsets(annotation.startOffset, annotation.endOffset);
+    const range = resolveAnnotationRange(annotation, snapshot);
     if (!range) {
       continue;
     }
@@ -319,7 +492,7 @@ export const getQuoteContextByOffsets = (
   endOffset: number,
   contextLength = 32
 ): QuoteContext => {
-  const fullText = flattenDocumentText();
+  const fullText = buildTextSnapshot({ excludeHighlights: false }).fullText;
   if (startOffset < 0 || endOffset < startOffset || startOffset > fullText.length) {
     return { prefixText: "", suffixText: "" };
   }
