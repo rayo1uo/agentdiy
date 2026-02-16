@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/rayo1uo/agentdiy/server/internal/annotation"
+	"github.com/rayo1uo/annota/server/internal/annotation"
 )
 
 func TestMemoryAnnotationRepositoryUpdateCommentUpdatesColorWhenProvided(t *testing.T) {

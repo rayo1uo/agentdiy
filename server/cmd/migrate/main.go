@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/rayo1uo/agentdiy/server/internal/config"
+	"github.com/rayo1uo/annota/server/internal/config"
 )
 
 type migrationFile struct {

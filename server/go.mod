@@ -1,4 +1,4 @@
-module github.com/rayo1uo/agentdiy/server
+module github.com/rayo1uo/annota/server
 
 go 1.23
 

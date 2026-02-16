@@ -4,8 +4,8 @@
 
 Chrome 划词高亮与评论插件（MV3）+ Go 后端 + MySQL 的最小可用实现，支持登录、手动/定时同步、跨设备合并与冲突处理。
 
-- 仓库地址：[https://github.com/rayo1uo/agentdiy](https://github.com/rayo1uo/agentdiy)
-- Go 模块：`github.com/rayo1uo/agentdiy/server`
+- 仓库地址：[https://github.com/rayo1uo/annota](https://github.com/rayo1uo/annota)
+- Go 模块：`github.com/rayo1uo/annota/server`
 
 ## 功能概览
 

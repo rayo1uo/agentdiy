@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rayo1uo/agentdiy/server/internal/auth"
-	"github.com/rayo1uo/agentdiy/server/internal/storage"
+	"github.com/rayo1uo/annota/server/internal/auth"
+	"github.com/rayo1uo/annota/server/internal/storage"
 )
 
 func TestServiceRegisterLoginRefreshLogout(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/rayo1uo/agentdiy/server/internal/auth"
-	"github.com/rayo1uo/agentdiy/server/internal/web"
+	"github.com/rayo1uo/annota/server/internal/auth"
+	"github.com/rayo1uo/annota/server/internal/web"
 )
 
 type AuthHandler struct {

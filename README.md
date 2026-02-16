@@ -4,8 +4,8 @@ English | [中文](./README.zh.md)
 
 A Chrome text highlight/comment extension (Manifest V3) with a Go backend and MySQL storage, designed as an MVP with login, manual/timed sync, and cross-device convergence.
 
-- Repository: [https://github.com/rayo1uo/agentdiy](https://github.com/rayo1uo/agentdiy)
-- Go module: `github.com/rayo1uo/agentdiy/server`
+- Repository: [https://github.com/rayo1uo/annota](https://github.com/rayo1uo/annota)
+- Go module: `github.com/rayo1uo/annota/server`
 
 ## Features
 

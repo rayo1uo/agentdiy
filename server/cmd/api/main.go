@@ -11,11 +11,11 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/rayo1uo/agentdiy/server/internal/auth"
-	"github.com/rayo1uo/agentdiy/server/internal/config"
-	httpx "github.com/rayo1uo/agentdiy/server/internal/http"
-	"github.com/rayo1uo/agentdiy/server/internal/http/handler"
-	"github.com/rayo1uo/agentdiy/server/internal/storage"
+	"github.com/rayo1uo/annota/server/internal/auth"
+	"github.com/rayo1uo/annota/server/internal/config"
+	httpx "github.com/rayo1uo/annota/server/internal/http"
+	"github.com/rayo1uo/annota/server/internal/http/handler"
+	"github.com/rayo1uo/annota/server/internal/storage"
 )
 
 func main() {

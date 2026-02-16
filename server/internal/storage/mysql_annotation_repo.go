@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/rayo1uo/agentdiy/server/internal/annotation"
+	"github.com/rayo1uo/annota/server/internal/annotation"
 )
 
 type MySQLAnnotationRepository struct {

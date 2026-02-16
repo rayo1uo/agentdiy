@@ -90,12 +90,12 @@ docker compose version
 示例目录：
 
 ```bash
-sudo mkdir -p /opt/agentdiy
-sudo chown -R $USER:$USER /opt/agentdiy
-cd /opt/agentdiy
+sudo mkdir -p /opt/annota
+sudo chown -R $USER:$USER /opt/annota
+cd /opt/annota
 ```
 
-将项目放到 `/opt/agentdiy` 后，进入项目根目录（包含 `docker-compose.yml` 的目录）。
+将项目放到 `/opt/annota` 后，进入项目根目录（包含 `docker-compose.yml` 的目录）。
 
 ## 4.2 生成生产环境 `.env`
 
@@ -234,9 +234,9 @@ docker volume ls | grep mysql_data
 ## 9.1 逻辑备份（推荐每日）
 
 ```bash
-mkdir -p /opt/agentdiy/backups
+mkdir -p /opt/annota/backups
 docker exec annota-mysql sh -c 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --databases annota --single-transaction --quick --lock-tables=false' \
-  > /opt/agentdiy/backups/annota_$(date +%F_%H%M%S).sql
+  > /opt/annota/backups/annota_$(date +%F_%H%M%S).sql
 ```
 
 建议再把备份上传到 OSS/NAS。
@@ -244,7 +244,7 @@ docker exec annota-mysql sh -c 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --data
 ## 9.2 恢复
 
 ```bash
-cat /opt/agentdiy/backups/annota_xxx.sql | \
+cat /opt/annota/backups/annota_xxx.sql | \
 docker exec -i annota-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"'
 ```
 
@@ -255,7 +255,7 @@ docker exec -i annota-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"'
 ## 10. 升级流程
 
 ```bash
-cd /opt/agentdiy
+cd /opt/annota
 git pull
 docker compose up -d --build
 docker compose ps
