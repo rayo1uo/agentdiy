@@ -1,4 +1,4 @@
-module github.com/luoyu15/agentdiy/server
+module github.com/rayo1uo/agentdiy/server
 
 go 1.23
 

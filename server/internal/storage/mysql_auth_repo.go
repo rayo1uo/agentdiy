@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/luoyu15/agentdiy/server/internal/auth"
+	"github.com/rayo1uo/agentdiy/server/internal/auth"
 )
 
 type MySQLAuthRepository struct {

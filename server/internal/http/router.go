@@ -3,8 +3,8 @@ package httpx
 import (
 	"net/http"
 
-	"github.com/luoyu15/agentdiy/server/internal/http/handler"
-	"github.com/luoyu15/agentdiy/server/internal/middleware"
+	"github.com/rayo1uo/agentdiy/server/internal/http/handler"
+	"github.com/rayo1uo/agentdiy/server/internal/middleware"
 )
 
 func NewRouter(

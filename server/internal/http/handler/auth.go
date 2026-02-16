@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/luoyu15/agentdiy/server/internal/auth"
-	"github.com/luoyu15/agentdiy/server/internal/web"
+	"github.com/rayo1uo/agentdiy/server/internal/auth"
+	"github.com/rayo1uo/agentdiy/server/internal/web"
 )
 
 type AuthHandler struct {

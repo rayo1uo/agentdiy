@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/luoyu15/agentdiy/server/internal/annotation"
+	"github.com/rayo1uo/agentdiy/server/internal/annotation"
 )
 
 type MemoryAnnotationRepository struct {

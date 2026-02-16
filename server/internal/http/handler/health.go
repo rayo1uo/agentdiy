@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/luoyu15/agentdiy/server/internal/web"
+	"github.com/rayo1uo/agentdiy/server/internal/web"
 )
 
 type HealthHandler struct{}

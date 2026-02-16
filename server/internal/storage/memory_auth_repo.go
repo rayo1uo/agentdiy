@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/luoyu15/agentdiy/server/internal/auth"
+	"github.com/rayo1uo/agentdiy/server/internal/auth"
 )
 
 type MemoryAuthRepository struct {

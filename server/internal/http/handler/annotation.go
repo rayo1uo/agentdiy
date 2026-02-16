@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/luoyu15/agentdiy/server/internal/annotation"
-	"github.com/luoyu15/agentdiy/server/internal/middleware"
-	"github.com/luoyu15/agentdiy/server/internal/storage"
-	"github.com/luoyu15/agentdiy/server/internal/web"
+	"github.com/rayo1uo/agentdiy/server/internal/annotation"
+	"github.com/rayo1uo/agentdiy/server/internal/middleware"
+	"github.com/rayo1uo/agentdiy/server/internal/storage"
+	"github.com/rayo1uo/agentdiy/server/internal/web"
 )
 
 type AnnotationHandler struct {

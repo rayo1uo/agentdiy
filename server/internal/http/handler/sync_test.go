@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luoyu15/agentdiy/server/internal/auth"
-	"github.com/luoyu15/agentdiy/server/internal/http/handler"
-	"github.com/luoyu15/agentdiy/server/internal/middleware"
-	"github.com/luoyu15/agentdiy/server/internal/storage"
+	"github.com/rayo1uo/agentdiy/server/internal/auth"
+	"github.com/rayo1uo/agentdiy/server/internal/http/handler"
+	"github.com/rayo1uo/agentdiy/server/internal/middleware"
+	"github.com/rayo1uo/agentdiy/server/internal/storage"
 )
 
 type pushResponse struct {
