@@ -115,6 +115,7 @@ func (h SyncHandler) Push(w http.ResponseWriter, r *http.Request) {
 			annotationModel, updateErr := h.annotationRepo.UpdateComment(r.Context(), userID, annotationID, annotation.UpdateCommentInput{
 				URL:         url,
 				CommentText: operation.CommentText,
+				Color:       operation.Color,
 			})
 			if updateErr != nil {
 				processErr = updateErr

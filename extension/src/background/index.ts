@@ -115,15 +115,83 @@ const saveAnnotations = async (url: string, annotations: Annotation[]): Promise<
   await chrome.storage.local.set({ [key]: annotations });
 };
 
+const parseTimestamp = (value: string): number => {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : 0;
+};
+
+const shouldReplaceAnnotation = (current: Annotation, incoming: Annotation): boolean => {
+  if (incoming.version > current.version) {
+    return true;
+  }
+  if (incoming.version < current.version) {
+    return false;
+  }
+
+  const incomingUpdatedAt = parseTimestamp(incoming.updatedAt || incoming.createdAt);
+  const currentUpdatedAt = parseTimestamp(current.updatedAt || current.createdAt);
+  if (incomingUpdatedAt <= currentUpdatedAt) {
+    return false;
+  }
+
+  // Same version but different visible content likely indicates stale or out-of-order payload.
+  if (incoming.commentText !== current.commentText || incoming.color !== current.color) {
+    return false;
+  }
+
+  return true;
+};
+
+const mergeAnnotations = (local: Annotation[], remote: Annotation[]): Annotation[] => {
+  const result = new Map<string, Annotation>();
+
+  for (const localItem of local) {
+    result.set(localItem.id, localItem);
+  }
+
+  for (const remoteItem of remote) {
+    const localItem = result.get(remoteItem.id);
+    if (!localItem) {
+      result.set(remoteItem.id, remoteItem);
+      continue;
+    }
+
+    if (shouldReplaceAnnotation(localItem, remoteItem)) {
+      result.set(remoteItem.id, remoteItem);
+    }
+  }
+
+  return Array.from(result.values()).sort((a, b) => {
+    const bTime = parseTimestamp(b.updatedAt || b.createdAt);
+    const aTime = parseTimestamp(a.updatedAt || a.createdAt);
+    if (bTime !== aTime) {
+      return bTime - aTime;
+    }
+    return a.id.localeCompare(b.id);
+  });
+};
+
 const upsertAnnotation = async (annotation: Annotation): Promise<void> => {
   const annotations = await listAnnotations(annotation.url);
   const index = annotations.findIndex((current) => current.id === annotation.id);
   if (index >= 0) {
-    annotations[index] = annotation;
+    if (shouldReplaceAnnotation(annotations[index], annotation)) {
+      annotations[index] = annotation;
+    }
   } else {
     annotations.push(annotation);
   }
   await saveAnnotations(annotation.url, annotations);
+};
+
+const prunePendingUpdateOperations = async (url: string, annotationID: string): Promise<void> => {
+  const queue = await getSyncQueue();
+  const nextQueue = queue.filter(
+    (item) => !(item.opType === "update_comment" && item.url === url && item.annotationId === annotationID)
+  );
+  if (nextQueue.length !== queue.length) {
+    await saveSyncQueue(nextQueue);
+  }
 };
 
 const removeAnnotation = async (url: string, annotationID: string): Promise<void> => {
@@ -443,9 +511,9 @@ const createAnnotationOnBackend = async (
 const updateAnnotationCommentOnBackend = async (
   config: SyncConfig,
   payload: AnnotationUpdateCommentInput
-): Promise<Annotation | null> => {
+): Promise<{ annotation: Annotation | null; shouldRetryFallback: boolean }> => {
   if (!canUseBackendAnnotations(config)) {
-    return null;
+    return { annotation: null, shouldRetryFallback: true };
   }
 
   try {
@@ -456,18 +524,22 @@ const updateAnnotationCommentOnBackend = async (
         method: "PATCH",
         body: JSON.stringify({
           url: payload.url,
-          comment_text: payload.commentText
+          comment_text: payload.commentText,
+          color: payload.color
         })
       }
     );
     if (!response.ok) {
-      return null;
+      if (response.status >= 500 || response.status === 429) {
+        return { annotation: null, shouldRetryFallback: true };
+      }
+      return { annotation: null, shouldRetryFallback: false };
     }
 
     const body = (await response.json()) as ServerAnnotation;
-    return toLocalAnnotation(body);
+    return { annotation: toLocalAnnotation(body), shouldRetryFallback: false };
   } catch {
-    return null;
+    return { annotation: null, shouldRetryFallback: true };
   }
 };
 
@@ -749,13 +821,15 @@ const scheduleSync = (reason: string): void => {
 };
 
 const handleList = async (url: string): Promise<Annotation[]> => {
+  const localAnnotations = await listAnnotations(url);
   const config = await loadSyncConfig();
   const remoteAnnotations = await listAnnotationsFromBackend(config, url);
   if (remoteAnnotations) {
-    await saveAnnotations(url, remoteAnnotations);
-    return remoteAnnotations;
+    const merged = mergeAnnotations(localAnnotations, remoteAnnotations);
+    await saveAnnotations(url, merged);
+    return merged;
   }
-  return listAnnotations(url);
+  return localAnnotations;
 };
 
 const listAnnotationURLSummaries = async (): Promise<AnnotationURLSummaryResponse> => {
@@ -852,28 +926,51 @@ const handleUpdateComment = async (
   }
 
   target.commentText = payload.commentText;
+  if (typeof payload.color === "string" && payload.color.trim() !== "") {
+    target.color = payload.color;
+  }
   target.version += 1;
   target.updatedAt = nowISO();
   await saveAnnotations(payload.url, annotations);
+  await prunePendingUpdateOperations(payload.url, payload.id);
+  let resultAnnotation: Annotation = { ...target };
   const config = await loadSyncConfig();
-  const remoteUpdated = await updateAnnotationCommentOnBackend(config, payload);
-  if (!remoteUpdated) {
+  const remoteUpdateResult = await updateAnnotationCommentOnBackend(config, payload);
+  if (!remoteUpdateResult.annotation) {
+    if (!remoteUpdateResult.shouldRetryFallback) {
+      await emitChanged(payload.url);
+      return resultAnnotation;
+    }
     await enqueueOperation({
       opId: makeOperationID(),
       opType: "update_comment",
       url: payload.url,
       annotationId: payload.id,
+      color: payload.color,
       commentText: payload.commentText,
       createdAt: nowISO(),
       lastError: ""
     });
     scheduleSync("annotation-update-comment-fallback");
   } else {
-    await upsertAnnotation(remoteUpdated);
+    const mergedRemoteUpdated: Annotation = {
+      ...remoteUpdateResult.annotation,
+      commentText: payload.commentText,
+      color:
+        typeof payload.color === "string" && payload.color.trim() !== ""
+          ? payload.color
+          : remoteUpdateResult.annotation.color
+    };
+    await upsertAnnotation(mergedRemoteUpdated);
+    target.commentText = mergedRemoteUpdated.commentText;
+    target.color = mergedRemoteUpdated.color;
+    target.version = mergedRemoteUpdated.version;
+    target.updatedAt = mergedRemoteUpdated.updatedAt;
+    resultAnnotation = mergedRemoteUpdated;
   }
 
   await emitChanged(payload.url);
-  return remoteUpdated ?? target;
+  return resultAnnotation;
 };
 
 const handleDelete = async (payload: AnnotationDeleteInput): Promise<boolean> => {

@@ -294,13 +294,18 @@ const createAnnotation = async (
   await refreshAnnotations();
 };
 
-const updateAnnotationComment = async (annotationID: string, commentText: string): Promise<void> => {
+const updateAnnotationComment = async (
+  annotationID: string,
+  commentText: string,
+  color?: string
+): Promise<void> => {
   await sendRuntimeMessage<Annotation>({
     type: "annotation.updateComment",
     payload: {
       url: currentURL(),
       id: annotationID,
-      commentText
+      commentText,
+      color
     }
   });
 
@@ -561,12 +566,16 @@ const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
   subtitle.className = "annota-toolbar-subtitle";
   subtitle.textContent = "编辑评论";
 
-  const colorRow = buildColorRow(annotation.color);
-
   const quotePreview = document.createElement("div");
   quotePreview.className = "annota-edit-quote";
   quotePreview.style.setProperty("--annota-highlight-color", annotation.color);
   quotePreview.textContent = annotation.quoteText;
+
+  let selectedColor = annotation.color;
+  const colorRow = buildColorRow(selectedColor, (color) => {
+    selectedColor = color;
+    quotePreview.style.setProperty("--annota-highlight-color", color);
+  });
 
   const commentInput = document.createElement("textarea");
   commentInput.className = "annota-comment-input";
@@ -605,7 +614,7 @@ const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
     const previous = saveButton.textContent;
     saveButton.textContent = "保存中...";
     try {
-      await updateAnnotationComment(annotation.id, commentInput.value);
+      await updateAnnotationComment(annotation.id, commentInput.value, selectedColor);
     } catch (error) {
       setError(error instanceof Error ? error.message : "保存评论失败");
     } finally {
@@ -695,6 +704,11 @@ const selectionHandler = (event: MouseEvent): void => {
 
   const range = getCurrentSelectionRange();
   if (!range) {
+    const annotationID = target?.closest<HTMLElement>(".annota-highlight")?.dataset.annoId?.trim() ?? "";
+    if (annotationID) {
+      void openEditCommentForAnnotation(annotationID);
+      return;
+    }
     hideToolbar();
     return;
   }

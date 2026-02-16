@@ -33,6 +33,7 @@ export interface AnnotationUpdateCommentInput {
   url: string;
   id: string;
   commentText: string;
+  color?: string;
 }
 
 export interface AnnotationDeleteInput {

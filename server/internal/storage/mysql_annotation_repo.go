@@ -114,13 +114,14 @@ func (r *MySQLAnnotationRepository) UpdateComment(ctx context.Context, userID, i
 		UPDATE annotations a
 		JOIN documents d ON d.id = a.document_id
 		SET a.comment_text = ?,
+			a.color = COALESCE(NULLIF(?, ''), a.color),
 			a.version = a.version + 1,
 			a.updated_at = CURRENT_TIMESTAMP(3)
 		WHERE a.id = ?
 		  AND a.user_id = ?
 		  AND d.url = ?
 		  AND a.status = 'active'
-	`, input.CommentText, id, userID, input.URL)
+	`, input.CommentText, input.Color, id, userID, input.URL)
 	if err != nil {
 		return annotation.Annotation{}, err
 	}

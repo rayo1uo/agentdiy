@@ -89,6 +89,9 @@ func (r *MemoryAnnotationRepository) UpdateComment(_ context.Context, userID, id
 		}
 
 		items[index].CommentText = input.CommentText
+		if input.Color != "" {
+			items[index].Color = input.Color
+		}
 		items[index].Version++
 		items[index].UpdatedAt = time.Now().UTC()
 		r.items[userID][input.URL] = items

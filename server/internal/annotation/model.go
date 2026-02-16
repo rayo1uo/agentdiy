@@ -43,4 +43,5 @@ type CreateInput struct {
 type UpdateCommentInput struct {
 	URL         string `json:"url"`
 	CommentText string `json:"comment_text"`
+	Color       string `json:"color"`
 }

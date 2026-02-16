@@ -7,6 +7,25 @@ import { sendRuntimeMessage } from "@/lib/runtime";
 import "./styles.css";
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
+const stripHash = (value: string): string => {
+  if (!value) {
+    return "";
+  }
+  const hashIndex = value.indexOf("#");
+  return hashIndex >= 0 ? value.slice(0, hashIndex) : value;
+};
+const canonicalURL = (value: string): string => {
+  if (!value) {
+    return "";
+  }
+  try {
+    const parsed = new URL(value);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return stripHash(value);
+  }
+};
 
 const getActiveTabContext = async (): Promise<{ tabId: number | null; url: string }> => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -155,7 +174,13 @@ function SidePanelApp(): JSX.Element {
       if (!tab.active) {
         return;
       }
-      if (typeof changeInfo.url === "string" || changeInfo.status === "complete") {
+
+      if (typeof changeInfo.url === "string") {
+        // Ignore hash-only URL updates and any update that doesn't change
+        // the effective page URL for annotations.
+        if (canonicalURL(changeInfo.url) === canonicalURL(url)) {
+          return;
+        }
         void refreshActiveTab();
       }
     };
