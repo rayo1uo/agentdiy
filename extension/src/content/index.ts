@@ -40,8 +40,14 @@ type ToolbarPreferences = {
   width: number;
 };
 
+type ActiveEditColorPreview = {
+  annotationID: string;
+  originalColor: string;
+};
+
 let toolbar: HTMLDivElement | null = null;
 let activeDraft: SelectionDraft | null = null;
+let activeEditColorPreview: ActiveEditColorPreview | null = null;
 let latestAnnotations: Annotation[] = [];
 let renderRetryTimers: number[] = [];
 let mutationObserver: MutationObserver | null = null;
@@ -58,7 +64,86 @@ const pageTitle = (): string => document.title;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
-const hideToolbar = (): void => {
+const parseHexColor = (input: string): { r: number; g: number; b: number } | null => {
+  const value = input.trim().toLowerCase();
+  if (!value.startsWith("#")) {
+    return null;
+  }
+
+  const hex = value.slice(1);
+  if (hex.length === 3) {
+    const r = parseInt(`${hex[0]}${hex[0]}`, 16);
+    const g = parseInt(`${hex[1]}${hex[1]}`, 16);
+    const b = parseInt(`${hex[2]}${hex[2]}`, 16);
+    if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) {
+      return null;
+    }
+    return { r, g, b };
+  }
+
+  if (hex.length === 6) {
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) {
+      return null;
+    }
+    return { r, g, b };
+  }
+
+  return null;
+};
+
+const toLinearChannel = (channel: number): number => {
+  const value = channel / 255;
+  return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+};
+
+const pickReadableTextColor = (backgroundColor: string): string => {
+  const background = parseHexColor(backgroundColor);
+  if (!background) {
+    return "#0f172a";
+  }
+
+  const luminance = (rgb: { r: number; g: number; b: number }): number =>
+    0.2126 * toLinearChannel(rgb.r) + 0.7152 * toLinearChannel(rgb.g) + 0.0722 * toLinearChannel(rgb.b);
+
+  const contrastRatio = (a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }): number => {
+    const lumA = luminance(a);
+    const lumB = luminance(b);
+    const lighter = Math.max(lumA, lumB);
+    const darker = Math.min(lumA, lumB);
+    return (lighter + 0.05) / (darker + 0.05);
+  };
+
+  const darkText = { r: 15, g: 23, b: 42 };
+  const lightText = { r: 248, g: 250, b: 252 };
+  return contrastRatio(background, darkText) >= contrastRatio(background, lightText) ? "#0f172a" : "#f8fafc";
+};
+
+const applyHighlightColorToAnnotation = (annotationID: string, color: string): void => {
+  const escaped = escapeForAttributeSelector(annotationID);
+  const textColor = pickReadableTextColor(color);
+  document.querySelectorAll<HTMLElement>(`[data-anno-id="${escaped}"]`).forEach((element) => {
+    element.style.setProperty("--annota-highlight-color", color);
+    element.style.setProperty("--annota-highlight-text-color", textColor);
+  });
+};
+
+const revertActiveEditColorPreview = (): void => {
+  if (!activeEditColorPreview) {
+    return;
+  }
+  applyHighlightColorToAnnotation(activeEditColorPreview.annotationID, activeEditColorPreview.originalColor);
+  activeEditColorPreview = null;
+};
+
+const hideToolbar = (options?: { revertEditColorPreview?: boolean }): void => {
+  if (options?.revertEditColorPreview ?? true) {
+    revertActiveEditColorPreview();
+  } else {
+    activeEditColorPreview = null;
+  }
   toolbar?.remove();
   toolbar = null;
   activeDraft = null;
@@ -309,7 +394,7 @@ const updateAnnotationComment = async (
     }
   });
 
-  hideToolbar();
+  hideToolbar({ revertEditColorPreview: false });
   await refreshAnnotations();
 };
 
@@ -553,6 +638,10 @@ const findAnnotationAnchorRect = (annotationID: string): DOMRect | null => {
 
 const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
   hideToolbar();
+  activeEditColorPreview = {
+    annotationID: annotation.id,
+    originalColor: annotation.color
+  };
 
   const nextToolbar = document.createElement("div");
   nextToolbar.className = TOOLBAR_CLASS;
@@ -574,6 +663,7 @@ const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
   let selectedColor = annotation.color;
   const colorRow = buildColorRow(selectedColor, (color) => {
     selectedColor = color;
+    applyHighlightColorToAnnotation(annotation.id, color);
     quotePreview.style.setProperty("--annota-highlight-color", color);
   });
 
@@ -747,7 +837,7 @@ const onRuntimeMessage = (message: RuntimeRequest | AnnotationChangedEvent): voi
 
 const bootstrap = async (): Promise<void> => {
   document.addEventListener("mouseup", selectionHandler);
-  document.addEventListener("scroll", hideToolbar, true);
+  document.addEventListener("scroll", () => hideToolbar(), true);
   document.addEventListener("mousedown", (event) => {
     const target = event.target as HTMLElement | null;
     if (!target || !target.closest(`.${TOOLBAR_CLASS}`)) {
