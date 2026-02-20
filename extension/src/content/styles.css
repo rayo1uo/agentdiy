@@ -71,9 +71,16 @@
   font-size: 12px;
   line-height: 1.4;
   font-family: inherit;
-  color: #111827;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  caret-color: #111827 !important;
   background: #ffffff;
   box-sizing: border-box;
+}
+
+.annota-comment-input::placeholder {
+  color: #6b7280 !important;
+  -webkit-text-fill-color: #6b7280 !important;
 }
 
 .annota-edit-quote {
