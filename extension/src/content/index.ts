@@ -26,6 +26,8 @@ const TOOLBAR_OPACITY_MAX = 1;
 const TOOLBAR_WIDTH_MIN = 240;
 const TOOLBAR_WIDTH_MAX = 520;
 const STORAGE_REFRESH_DEBOUNCE_MS = 180;
+const TOOLBAR_REOPEN_SUPPRESS_MS = 220;
+const DRAFT_SELECTION_HIGHLIGHT_NAME = "annota-draft-selection";
 
 type SelectionDraft = {
   quoteText: string;
@@ -54,6 +56,8 @@ let mutationObserver: MutationObserver | null = null;
 let mutationObserverStopTimer: number | null = null;
 let mutationRenderTimer: number | null = null;
 let storageRefreshTimer: number | null = null;
+let suppressToolbarOpenUntil = 0;
+let activeDraftSelectionRange: Range | null = null;
 let toolbarPreferences: ToolbarPreferences = {
   opacity: 0.92,
   width: 320
@@ -130,6 +134,62 @@ const applyHighlightColorToAnnotation = (annotationID: string, color: string): v
   });
 };
 
+type CSSHighlightsRegistryLike = {
+  set: (name: string, value: unknown) => void;
+  delete: (name: string) => void;
+};
+
+const getCSSHighlightsRegistry = (): CSSHighlightsRegistryLike | null => {
+  if (typeof CSS === "undefined") {
+    return null;
+  }
+  const maybe = (CSS as { highlights?: CSSHighlightsRegistryLike }).highlights;
+  if (!maybe || typeof maybe.set !== "function" || typeof maybe.delete !== "function") {
+    return null;
+  }
+  return maybe;
+};
+
+const applyDraftSelectionPreview = (range: Range, color: string): void => {
+  const registry = getCSSHighlightsRegistry();
+  const HighlightCtor = (window as unknown as { Highlight?: new (range: Range) => unknown }).Highlight;
+  if (!registry || typeof HighlightCtor !== "function") {
+    activeDraftSelectionRange = null;
+    return;
+  }
+  activeDraftSelectionRange = range.cloneRange();
+  try {
+    registry.set(DRAFT_SELECTION_HIGHLIGHT_NAME, new HighlightCtor(activeDraftSelectionRange));
+    document.documentElement.style.setProperty("--annota-draft-preview-color", color);
+  } catch {
+    activeDraftSelectionRange = null;
+  }
+};
+
+const updateDraftSelectionPreviewColor = (color: string): void => {
+  if (!activeDraftSelectionRange) {
+    return;
+  }
+  const registry = getCSSHighlightsRegistry();
+  const HighlightCtor = (window as unknown as { Highlight?: new (range: Range) => unknown }).Highlight;
+  if (!registry || typeof HighlightCtor !== "function") {
+    return;
+  }
+  try {
+    registry.set(DRAFT_SELECTION_HIGHLIGHT_NAME, new HighlightCtor(activeDraftSelectionRange));
+    document.documentElement.style.setProperty("--annota-draft-preview-color", color);
+  } catch {
+    // ignore update failure and keep interaction flowing
+  }
+};
+
+const clearDraftSelectionPreview = (): void => {
+  activeDraftSelectionRange = null;
+  const registry = getCSSHighlightsRegistry();
+  registry?.delete(DRAFT_SELECTION_HIGHLIGHT_NAME);
+  document.documentElement.style.removeProperty("--annota-draft-preview-color");
+};
+
 const revertActiveEditColorPreview = (): void => {
   if (!activeEditColorPreview) {
     return;
@@ -139,6 +199,7 @@ const revertActiveEditColorPreview = (): void => {
 };
 
 const hideToolbar = (options?: { revertEditColorPreview?: boolean }): void => {
+  clearDraftSelectionPreview();
   if (options?.revertEditColorPreview ?? true) {
     revertActiveEditColorPreview();
   } else {
@@ -147,6 +208,14 @@ const hideToolbar = (options?: { revertEditColorPreview?: boolean }): void => {
   toolbar?.remove();
   toolbar = null;
   activeDraft = null;
+};
+
+const closeToolbarByUserIntent = (options?: { clearSelection?: boolean }): void => {
+  suppressToolbarOpenUntil = Date.now() + TOOLBAR_REOPEN_SUPPRESS_MS;
+  if (options?.clearSelection ?? true) {
+    window.getSelection()?.removeAllRanges();
+  }
+  hideToolbar();
 };
 
 const applyToolbarPreferences = (element: HTMLDivElement): void => {
@@ -517,7 +586,9 @@ const showCreateToolbar = (range: Range): void => {
   let selectedColor: string = DEFAULT_HIGHLIGHT_COLOR;
   const colorRow = buildColorRow(selectedColor, (color) => {
     selectedColor = color;
+    updateDraftSelectionPreviewColor(color);
   });
+  applyDraftSelectionPreview(range, selectedColor);
 
   const commentInput = document.createElement("textarea");
   commentInput.className = "annota-comment-input";
@@ -540,7 +611,7 @@ const showCreateToolbar = (range: Range): void => {
   actionRow.className = "annota-action-row";
 
   const cancelButton = buildActionButton("取消", "ghost", async () => {
-    hideToolbar();
+    closeToolbarByUserIntent();
   });
 
   const highlightOnlyButton = buildActionButton("仅高亮", "ghost", async () => {
@@ -596,7 +667,7 @@ const showCreateToolbar = (range: Range): void => {
   commentInput.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      hideToolbar();
+      closeToolbarByUserIntent();
       return;
     }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -690,7 +761,7 @@ const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
     if (saving) {
       return;
     }
-    hideToolbar();
+    closeToolbarByUserIntent();
   });
 
   const saveButton = buildActionButton("保存评论", "primary", async () => {
@@ -718,7 +789,7 @@ const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
   commentInput.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      void cancelButton.click();
+      closeToolbarByUserIntent();
       return;
     }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -799,10 +870,16 @@ const selectionHandler = (event: MouseEvent): void => {
       void openEditCommentForAnnotation(annotationID);
       return;
     }
+    if (Date.now() < suppressToolbarOpenUntil) {
+      return;
+    }
     hideToolbar();
     return;
   }
 
+  if (Date.now() < suppressToolbarOpenUntil) {
+    return;
+  }
   showCreateToolbar(range);
 };
 
@@ -839,9 +916,12 @@ const bootstrap = async (): Promise<void> => {
   document.addEventListener("mouseup", selectionHandler);
   document.addEventListener("scroll", () => hideToolbar(), true);
   document.addEventListener("mousedown", (event) => {
+    if (!toolbar) {
+      return;
+    }
     const target = event.target as HTMLElement | null;
     if (!target || !target.closest(`.${TOOLBAR_CLASS}`)) {
-      hideToolbar();
+      closeToolbarByUserIntent();
     }
   });
   chrome.runtime.onMessage.addListener((message) => {

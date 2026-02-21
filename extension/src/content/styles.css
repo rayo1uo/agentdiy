@@ -1,3 +1,8 @@
+::highlight(annota-draft-selection) {
+  background: color-mix(in srgb, var(--annota-draft-preview-color, #ffe58f) 72%, #ffffff);
+  color: #0f172a;
+}
+
 .annota-toolbar {
   all: initial;
   position: absolute;
@@ -153,6 +158,27 @@
   color: var(--annota-highlight-text-color, #0f172a);
   -webkit-text-fill-color: var(--annota-highlight-text-color, #0f172a);
   transition: box-shadow 180ms ease;
+}
+
+.annota-highlight[data-has-comment="true"] {
+  position: relative;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--annota-comment-marker-color, #1e40af);
+}
+
+.annota-highlight[data-comment-badge="true"]::after {
+  content: "💬";
+  position: absolute;
+  top: -0.72em;
+  right: -0.66em;
+  font-size: 11px;
+  line-height: 1;
+  z-index: 2;
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.9);
+  pointer-events: none;
 }
 
 .annota-highlight * {

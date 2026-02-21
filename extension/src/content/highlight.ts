@@ -25,6 +25,10 @@ interface RGBColor {
   b: number;
 }
 
+interface RGBAColor extends RGBColor {
+  a: number;
+}
+
 type QuoteContext = {
   prefixText: string;
   suffixText: string;
@@ -335,6 +339,68 @@ const parseHexColor = (input: string): RGBColor | null => {
   return null;
 };
 
+const clampColorChannel = (value: number): number => Math.min(255, Math.max(0, Math.round(value)));
+
+const parseCSSColor = (input: string): RGBAColor | null => {
+  const value = input.trim().toLowerCase();
+  if (!value) {
+    return null;
+  }
+  if (value === "transparent") {
+    return { r: 0, g: 0, b: 0, a: 0 };
+  }
+
+  const hex = parseHexColor(value);
+  if (hex) {
+    return { ...hex, a: 1 };
+  }
+
+  const match = value.match(/^rgba?\((.+)\)$/);
+  if (!match) {
+    return null;
+  }
+  const parts = match[1]
+    .split(/[,\s/]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (parts.length < 3) {
+    return null;
+  }
+
+  const parseChannel = (part: string): number | null => {
+    if (part.endsWith("%")) {
+      const percentage = Number.parseFloat(part.slice(0, -1));
+      if (Number.isNaN(percentage)) {
+        return null;
+      }
+      return clampColorChannel((percentage / 100) * 255);
+    }
+    const numeric = Number.parseFloat(part);
+    if (Number.isNaN(numeric)) {
+      return null;
+    }
+    return clampColorChannel(numeric);
+  };
+
+  const r = parseChannel(parts[0]);
+  const g = parseChannel(parts[1]);
+  const b = parseChannel(parts[2]);
+  if (r === null || g === null || b === null) {
+    return null;
+  }
+
+  let a = 1;
+  if (parts.length >= 4) {
+    const alphaPart = parts[3];
+    const alpha = Number.parseFloat(alphaPart);
+    if (!Number.isNaN(alpha)) {
+      a = Math.min(1, Math.max(0, alpha));
+    }
+  }
+
+  return { r, g, b, a };
+};
+
 const toLinear = (channel: number): number => {
   const value = channel / 255;
   return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
@@ -348,6 +414,31 @@ const contrastRatio = (a: RGBColor, b: RGBColor): number => {
   const lighter = Math.max(lumA, lumB);
   const darker = Math.min(lumA, lumB);
   return (lighter + 0.05) / (darker + 0.05);
+};
+
+const resolveBackgroundColor = (startElement: HTMLElement | null): RGBColor => {
+  let current: HTMLElement | null = startElement;
+  while (current) {
+    const parsed = parseCSSColor(window.getComputedStyle(current).backgroundColor);
+    if (parsed && parsed.a > 0.01) {
+      return { r: parsed.r, g: parsed.g, b: parsed.b };
+    }
+    current = current.parentElement;
+  }
+
+  const bodyParsed = parseCSSColor(window.getComputedStyle(document.body).backgroundColor);
+  if (bodyParsed && bodyParsed.a > 0.01) {
+    return { r: bodyParsed.r, g: bodyParsed.g, b: bodyParsed.b };
+  }
+
+  return { r: 255, g: 255, b: 255 };
+};
+
+const pickCommentMarkerColor = (contextNode: Text): string => {
+  const background = resolveBackgroundColor(contextNode.parentElement);
+  const lightMarker: RGBColor = { r: 147, g: 197, b: 253 };
+  const darkMarker: RGBColor = { r: 30, g: 64, b: 175 };
+  return contrastRatio(background, lightMarker) >= contrastRatio(background, darkMarker) ? "#93c5fd" : "#1e40af";
 };
 
 const pickReadableTextColor = (backgroundColor: string): string => {
@@ -412,6 +503,8 @@ const wrapRange = (range: Range, annotation: Annotation): boolean => {
     if (segments.length === 0) {
       return false;
     }
+    const hasComment = annotation.commentText.trim().length > 0;
+    const commentMarkerColor = hasComment ? pickCommentMarkerColor(segments[0].node) : "";
 
     let wrappedCount = 0;
     for (let i = segments.length - 1; i >= 0; i -= 1) {
@@ -423,6 +516,13 @@ const wrapRange = (range: Range, annotation: Annotation): boolean => {
       const wrapper = document.createElement("span");
       wrapper.className = HIGHLIGHT_CLASS;
       wrapper.dataset.annoId = annotation.id;
+      if (hasComment) {
+        wrapper.dataset.hasComment = "true";
+        if (i === 0) {
+          wrapper.dataset.commentBadge = "true";
+        }
+        wrapper.style.setProperty("--annota-comment-marker-color", commentMarkerColor);
+      }
       wrapper.style.setProperty("--annota-highlight-color", annotation.color);
       wrapper.style.setProperty("--annota-highlight-text-color", pickReadableTextColor(annotation.color));
 
