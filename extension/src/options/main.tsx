@@ -75,6 +75,9 @@ function OptionsApp(): JSX.Element {
   const [selectedAnnotations, setSelectedAnnotations] = React.useState<Annotation[]>([]);
   const [libraryLoading, setLibraryLoading] = React.useState(false);
   const [libraryError, setLibraryError] = React.useState("");
+  const [librarySearchKeyword, setLibrarySearchKeyword] = React.useState("");
+  const libraryBootstrappedRef = React.useRef(false);
+  const [libraryMatchedURLs, setLibraryMatchedURLs] = React.useState<string[] | null>(null);
 
   const loadSyncStatus = React.useCallback(async () => {
     const status = await sendRuntimeMessage<SyncStatus>({ type: "sync.conflicts.list", payload: {} });
@@ -373,6 +376,117 @@ function OptionsApp(): JSX.Element {
       setLibraryError(error instanceof Error ? error.message : "刷新划词库失败");
     }
   };
+  React.useEffect(() => {
+    if (activeTab !== "library" || libraryBootstrappedRef.current) {
+      return;
+    }
+    libraryBootstrappedRef.current = true;
+    if (urlSummaries.length === 0) {
+      void onRefreshLibrary();
+    }
+  }, [activeTab, onRefreshLibrary, urlSummaries.length]);
+
+  const normalizedLibraryKeyword = React.useMemo(() => librarySearchKeyword.trim().toLowerCase(), [librarySearchKeyword]);
+  React.useEffect(() => {
+    if (!normalizedLibraryKeyword) {
+      setLibraryMatchedURLs(null);
+      return;
+    }
+
+    let disposed = false;
+    setLibraryMatchedURLs(null);
+
+    void (async () => {
+      try {
+        const urls = urlSummaries.map((item) => item.url).filter(Boolean);
+        if (urls.length === 0) {
+          if (!disposed) {
+            setLibraryMatchedURLs([]);
+          }
+          return;
+        }
+
+        const keys = urls.map((url) => `${ANNOTATION_KEY_PREFIX}${url}`);
+        const allLocal = await chrome.storage.local.get(keys);
+        const matchedByAnnotation: string[] = [];
+        const matchedByMetaOnly: string[] = [];
+        const seen = new Set<string>();
+
+        for (const summary of urlSummaries) {
+          const title = (summary.title ?? "").toLowerCase();
+          const urlText = (summary.url ?? "").toLowerCase();
+          const metaMatched = title.includes(normalizedLibraryKeyword) || urlText.includes(normalizedLibraryKeyword);
+
+          const key = `${ANNOTATION_KEY_PREFIX}${summary.url}`;
+          const annotations = (allLocal[key] ?? []) as Annotation[];
+          const hasMatch = annotations.some((annotation) => {
+            if (annotation.status !== "active") {
+              return false;
+            }
+            const quote = (annotation.quoteText ?? "").toLowerCase();
+            const comment = (annotation.commentText ?? "").toLowerCase();
+            return quote.includes(normalizedLibraryKeyword) || comment.includes(normalizedLibraryKeyword);
+          });
+          if (hasMatch) {
+            if (!seen.has(summary.url)) {
+              matchedByAnnotation.push(summary.url);
+              seen.add(summary.url);
+            }
+            continue;
+          }
+
+          if (metaMatched && !seen.has(summary.url)) {
+            matchedByMetaOnly.push(summary.url);
+            seen.add(summary.url);
+          }
+        }
+
+        if (!disposed) {
+          setLibraryMatchedURLs([...matchedByAnnotation, ...matchedByMetaOnly]);
+        }
+      } catch {
+        if (!disposed) {
+          setLibraryMatchedURLs([]);
+        }
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [normalizedLibraryKeyword, urlSummaries]);
+
+  const filteredURLSummaries = React.useMemo(() => {
+    if (!normalizedLibraryKeyword) {
+      return urlSummaries;
+    }
+    if (!libraryMatchedURLs) {
+      return [];
+    }
+    const matchedSet = new Set(libraryMatchedURLs);
+    return urlSummaries.filter((item) => matchedSet.has(item.url));
+  }, [libraryMatchedURLs, normalizedLibraryKeyword, urlSummaries]);
+
+  React.useEffect(() => {
+    if (activeTab !== "library") {
+      return;
+    }
+    if (filteredURLSummaries.some((item) => item.url === selectedURL)) {
+      return;
+    }
+    setSelectedURL(filteredURLSummaries[0]?.url ?? "");
+  }, [activeTab, filteredURLSummaries, selectedURL]);
+
+  const filteredSelectedAnnotations = React.useMemo(() => {
+    if (!normalizedLibraryKeyword) {
+      return selectedAnnotations;
+    }
+    return selectedAnnotations.filter((item) => {
+      const quote = (item.quoteText ?? "").toLowerCase();
+      const comment = (item.commentText ?? "").toLowerCase();
+      return quote.includes(normalizedLibraryKeyword) || comment.includes(normalizedLibraryKeyword);
+    });
+  }, [normalizedLibraryKeyword, selectedAnnotations]);
 
   return (
     <main
@@ -683,6 +797,35 @@ function OptionsApp(): JSX.Element {
               刷新划词库
             </button>
           </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <input
+              value={librarySearchKeyword}
+              onChange={(event) => setLibrarySearchKeyword(event.target.value)}
+              placeholder="搜索划词关键词（句子/评论/网址）"
+              style={{
+                flex: 1,
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid #cbd5e1"
+              }}
+            />
+            {librarySearchKeyword.trim() ? (
+              <button
+                style={{
+                  border: "1px solid #c6d4e3",
+                  borderRadius: 8,
+                  padding: "7px 10px",
+                  background: "#fff",
+                  color: "#2f4f6d",
+                  cursor: "pointer",
+                  fontWeight: 700
+                }}
+                onClick={() => setLibrarySearchKeyword("")}
+              >
+                清空
+              </button>
+            ) : null}
+          </div>
 
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "minmax(220px, 32%) minmax(0, 1fr)" }}>
             <aside
@@ -696,9 +839,17 @@ function OptionsApp(): JSX.Element {
                 overflowY: "auto"
               }}
             >
-              <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#486581" }}>网址列表 ({urlSummaries.length})</div>
+              <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#486581" }}>
+                网址列表 ({filteredURLSummaries.length})
+              </div>
               {urlSummaries.length === 0 ? <div style={{ color: "#64748b", fontSize: 13 }}>暂无划词数据</div> : null}
-              {urlSummaries.map((summary) => {
+              {normalizedLibraryKeyword && libraryMatchedURLs === null ? (
+                <div style={{ color: "#64748b", fontSize: 13 }}>筛选中...</div>
+              ) : null}
+              {urlSummaries.length > 0 && filteredURLSummaries.length === 0 && libraryMatchedURLs !== null ? (
+                <div style={{ color: "#64748b", fontSize: 13 }}>暂无匹配网址</div>
+              ) : null}
+              {filteredURLSummaries.map((summary) => {
                 const selected = summary.url === selectedURL;
                 return (
                   <button
@@ -786,7 +937,10 @@ function OptionsApp(): JSX.Element {
                   {!libraryLoading && selectedAnnotations.length === 0 ? (
                     <p style={{ color: "#64748b", fontSize: 13 }}>该网址暂无高亮内容</p>
                   ) : null}
-                  {selectedAnnotations.map((annotation) => (
+                  {!libraryLoading && selectedAnnotations.length > 0 && filteredSelectedAnnotations.length === 0 ? (
+                    <p style={{ color: "#64748b", fontSize: 13 }}>未搜索到匹配高亮句子</p>
+                  ) : null}
+                  {filteredSelectedAnnotations.map((annotation) => (
                     <article
                       key={annotation.id}
                       style={{
@@ -819,7 +973,11 @@ function OptionsApp(): JSX.Element {
                   ))}
                 </>
               ) : (
-                <p style={{ color: "#64748b", fontSize: 13 }}>请选择左侧网址查看该页划词评论</p>
+                <p style={{ color: "#64748b", fontSize: 13 }}>
+                  {normalizedLibraryKeyword && filteredURLSummaries.length === 0
+                    ? "未搜索到匹配网址"
+                    : "请选择左侧网址查看该页划词评论"}
+                </p>
               )}
             </section>
           </div>

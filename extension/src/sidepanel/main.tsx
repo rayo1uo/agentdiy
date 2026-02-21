@@ -78,6 +78,7 @@ function SidePanelApp(): JSX.Element {
   const [showConflictPanel, setShowConflictPanel] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState<number>(PAGE_SIZE_OPTIONS[0]);
+  const [searchKeyword, setSearchKeyword] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
   const [syncNowPending, setSyncNowPending] = React.useState(false);
@@ -224,7 +225,7 @@ function SidePanelApp(): JSX.Element {
 
   React.useEffect(() => {
     setPage(1);
-  }, [url, pageSize]);
+  }, [url, pageSize, searchKeyword]);
 
   const sendMessageToActiveTab = React.useCallback(
     async (message: TabRuntimeRequest): Promise<boolean> => {
@@ -433,12 +434,24 @@ function SidePanelApp(): JSX.Element {
     return Array.from(groups.entries()).map(([message, items]) => ({ message, items }));
   }, [pageConflicts]);
 
+  const normalizedSearchKeyword = React.useMemo(() => searchKeyword.trim().toLowerCase(), [searchKeyword]);
+  const filteredAnnotations = React.useMemo(() => {
+    if (!normalizedSearchKeyword) {
+      return annotations;
+    }
+    return annotations.filter((item) => {
+      const quote = item.quoteText?.toLowerCase() ?? "";
+      const comment = item.commentText?.toLowerCase() ?? "";
+      return quote.includes(normalizedSearchKeyword) || comment.includes(normalizedSearchKeyword);
+    });
+  }, [annotations, normalizedSearchKeyword]);
+
   const totalPages = React.useMemo(() => {
-    if (annotations.length === 0) {
+    if (filteredAnnotations.length === 0) {
       return 1;
     }
-    return Math.ceil(annotations.length / pageSize);
-  }, [annotations.length, pageSize]);
+    return Math.ceil(filteredAnnotations.length / pageSize);
+  }, [filteredAnnotations.length, pageSize]);
 
   React.useEffect(() => {
     if (page > totalPages) {
@@ -448,8 +461,8 @@ function SidePanelApp(): JSX.Element {
 
   const pagedAnnotations = React.useMemo(() => {
     const start = (page - 1) * pageSize;
-    return annotations.slice(start, start + pageSize);
-  }, [annotations, page, pageSize]);
+    return filteredAnnotations.slice(start, start + pageSize);
+  }, [filteredAnnotations, page, pageSize]);
 
   return (
     <main className="sp-root">
@@ -552,8 +565,27 @@ function SidePanelApp(): JSX.Element {
       {error ? <p className="sp-error-text">{error}</p> : null}
 
       {!loading && annotations.length > 0 ? (
+        <section className="sp-search-bar">
+          <input
+            className="sp-search-input"
+            value={searchKeyword}
+            onChange={(event) => setSearchKeyword(event.target.value)}
+            placeholder="搜索本页高亮关键词（句子/评论）"
+          />
+          {searchKeyword.trim() ? (
+            <button className="sp-btn sp-search-clear-btn" onClick={() => setSearchKeyword("")}>
+              清空
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
+      {!loading && annotations.length > 0 ? (
         <section className="sp-pagination-bar">
-          <span className="sp-subtext">共 {annotations.length} 条</span>
+          <span className="sp-subtext">
+            共 {filteredAnnotations.length} 条
+            {searchKeyword.trim() ? `（总 ${annotations.length} 条）` : ""}
+          </span>
           <label className="sp-page-size">
             每页
             <select
@@ -587,6 +619,9 @@ function SidePanelApp(): JSX.Element {
       ) : null}
 
       {!loading && annotations.length === 0 ? <p className="sp-subtext">暂无高亮，先去页面划词试试。</p> : null}
+      {!loading && annotations.length > 0 && filteredAnnotations.length === 0 ? (
+        <p className="sp-subtext">未搜索到匹配高亮。</p>
+      ) : null}
       {pagedAnnotations.map((annotation) => {
         const isConflict = conflictSet.has(annotation.id);
         const isPending = pendingSet.has(annotation.id);
