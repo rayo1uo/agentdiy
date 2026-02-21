@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,39 @@ func (r *MemoryAnnotationRepository) ListByURL(_ context.Context, userID, url st
 			result = append(result, item)
 		}
 	}
+
+	return result, nil
+}
+
+func (r *MemoryAnnotationRepository) ListByUser(_ context.Context, userID string) ([]annotation.Annotation, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	userItems := r.items[userID]
+	result := make([]annotation.Annotation, 0)
+	for _, items := range userItems {
+		for _, item := range items {
+			if item.Status == annotation.StatusActive {
+				result = append(result, item)
+			}
+		}
+	}
+
+	slices.SortFunc(result, func(a, b annotation.Annotation) int {
+		if a.UpdatedAt.Equal(b.UpdatedAt) {
+			if a.ID < b.ID {
+				return -1
+			}
+			if a.ID > b.ID {
+				return 1
+			}
+			return 0
+		}
+		if a.UpdatedAt.After(b.UpdatedAt) {
+			return -1
+		}
+		return 1
+	})
 
 	return result, nil
 }

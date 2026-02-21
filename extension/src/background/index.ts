@@ -450,15 +450,16 @@ const toLocalAnnotation = (server: ServerAnnotation): Annotation => ({
 const canUseBackendAnnotations = (config: SyncConfig): boolean =>
   config.apiBaseURL !== "" && config.accessToken !== "";
 
-const listAnnotationsFromBackend = async (config: SyncConfig, url: string): Promise<Annotation[] | null> => {
+const listAnnotationsFromBackend = async (config: SyncConfig, url?: string): Promise<Annotation[] | null> => {
   if (!canUseBackendAnnotations(config)) {
     return null;
   }
 
   try {
+    const path = url ? `/api/v1/annotations?url=${encodeURIComponent(url)}` : "/api/v1/annotations";
     const { response } = await fetchWithAuth(
       config,
-      `/api/v1/annotations?url=${encodeURIComponent(url)}`,
+      path,
       { method: "GET" }
     );
     if (!response.ok) {
@@ -832,6 +833,27 @@ const handleList = async (url: string): Promise<Annotation[]> => {
   return localAnnotations;
 };
 
+const hydrateLocalAnnotationsFromBackend = async (): Promise<void> => {
+  const config = await loadSyncConfig();
+  const remoteAnnotations = await listAnnotationsFromBackend(config);
+  if (!remoteAnnotations) {
+    return;
+  }
+
+  const groupedByURL = new Map<string, Annotation[]>();
+  for (const annotation of remoteAnnotations) {
+    const current = groupedByURL.get(annotation.url) ?? [];
+    current.push(annotation);
+    groupedByURL.set(annotation.url, current);
+  }
+
+  for (const [url, remoteItems] of groupedByURL.entries()) {
+    const localItems = await listAnnotations(url);
+    const merged = mergeAnnotations(localItems, remoteItems);
+    await saveAnnotations(url, merged);
+  }
+};
+
 const listAnnotationURLSummaries = async (): Promise<AnnotationURLSummaryResponse> => {
   const storageData = await chrome.storage.local.get(null);
   const summaries: AnnotationURLSummary[] = [];
@@ -1179,6 +1201,7 @@ chrome.runtime.onMessage.addListener((request: RuntimeRequest, _sender, sendResp
           return;
         }
         case "annotation.urls": {
+          await hydrateLocalAnnotationsFromBackend();
           const result = await listAnnotationURLSummaries();
           sendResponse(ok<AnnotationURLSummaryResponse>(result));
           return;

@@ -61,6 +61,50 @@ func (r *MySQLAnnotationRepository) ListByURL(ctx context.Context, userID, url s
 	return result, nil
 }
 
+func (r *MySQLAnnotationRepository) ListByUser(ctx context.Context, userID string) ([]annotation.Annotation, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			a.id,
+			a.user_id,
+			d.url,
+			COALESCE(d.title, ''),
+			a.quote_text,
+			COALESCE(a.prefix_text, ''),
+			COALESCE(a.suffix_text, ''),
+			a.start_offset,
+			a.end_offset,
+			a.color,
+			COALESCE(a.comment_text, ''),
+			a.status,
+			a.version,
+			a.created_at,
+			a.updated_at
+		FROM annotations a
+		JOIN documents d ON d.id = a.document_id
+		WHERE a.user_id = ?
+		  AND a.status = 'active'
+		ORDER BY a.updated_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]annotation.Annotation, 0)
+	for rows.Next() {
+		item, scanErr := scanAnnotation(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (r *MySQLAnnotationRepository) Create(ctx context.Context, userID string, input annotation.CreateInput) (annotation.Annotation, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

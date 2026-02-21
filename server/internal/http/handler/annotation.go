@@ -55,12 +55,15 @@ func (h AnnotationHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	url := strings.TrimSpace(r.URL.Query().Get("url"))
+	var (
+		items []annotation.Annotation
+		err   error
+	)
 	if url == "" {
-		web.WriteError(w, http.StatusBadRequest, "missing query parameter: url")
-		return
+		items, err = h.repo.ListByUser(r.Context(), userID)
+	} else {
+		items, err = h.repo.ListByURL(r.Context(), userID, url)
 	}
-
-	items, err := h.repo.ListByURL(r.Context(), userID, url)
 	if err != nil {
 		web.WriteError(w, http.StatusInternalServerError, "failed to list annotations")
 		return
