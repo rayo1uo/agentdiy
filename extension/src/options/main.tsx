@@ -25,6 +25,7 @@ const TOOLBAR_OPACITY_MIN = 0.55;
 const TOOLBAR_OPACITY_MAX = 1;
 const TOOLBAR_WIDTH_MIN = 240;
 const TOOLBAR_WIDTH_MAX = 520;
+const LIBRARY_PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
@@ -76,6 +77,10 @@ function OptionsApp(): JSX.Element {
   const [libraryLoading, setLibraryLoading] = React.useState(false);
   const [libraryError, setLibraryError] = React.useState("");
   const [librarySearchKeyword, setLibrarySearchKeyword] = React.useState("");
+  const [libraryPage, setLibraryPage] = React.useState(1);
+  const [libraryPageSize, setLibraryPageSize] = React.useState<number>(LIBRARY_PAGE_SIZE_OPTIONS[0]);
+  const [libraryURLPage, setLibraryURLPage] = React.useState(1);
+  const [libraryURLPageSize, setLibraryURLPageSize] = React.useState<number>(LIBRARY_PAGE_SIZE_OPTIONS[0]);
   const libraryBootstrappedRef = React.useRef(false);
   const [libraryMatchedURLs, setLibraryMatchedURLs] = React.useState<string[] | null>(null);
 
@@ -476,6 +481,45 @@ function OptionsApp(): JSX.Element {
     }
     setSelectedURL(filteredURLSummaries[0]?.url ?? "");
   }, [activeTab, filteredURLSummaries, selectedURL]);
+  const libraryURLTotalPages = React.useMemo(() => {
+    if (filteredURLSummaries.length === 0) {
+      return 1;
+    }
+    return Math.ceil(filteredURLSummaries.length / libraryURLPageSize);
+  }, [filteredURLSummaries.length, libraryURLPageSize]);
+  React.useEffect(() => {
+    setLibraryURLPage(1);
+  }, [normalizedLibraryKeyword, libraryURLPageSize]);
+  React.useEffect(() => {
+    if (filteredURLSummaries.length === 0) {
+      if (libraryURLPage !== 1) {
+        setLibraryURLPage(1);
+      }
+      return;
+    }
+
+    if (libraryURLPage > libraryURLTotalPages) {
+      setLibraryURLPage(libraryURLTotalPages);
+    }
+  }, [filteredURLSummaries, libraryURLPage, libraryURLTotalPages]);
+  const pagedFilteredURLSummaries = React.useMemo(() => {
+    const start = (libraryURLPage - 1) * libraryURLPageSize;
+    return filteredURLSummaries.slice(start, start + libraryURLPageSize);
+  }, [filteredURLSummaries, libraryURLPage, libraryURLPageSize]);
+  React.useEffect(() => {
+    if (activeTab !== "library") {
+      return;
+    }
+    if (pagedFilteredURLSummaries.length === 0) {
+      if (selectedURL) {
+        setSelectedURL("");
+      }
+      return;
+    }
+    if (!pagedFilteredURLSummaries.some((item) => item.url === selectedURL)) {
+      setSelectedURL(pagedFilteredURLSummaries[0].url);
+    }
+  }, [activeTab, pagedFilteredURLSummaries, selectedURL]);
 
   const filteredSelectedAnnotations = React.useMemo(() => {
     if (!normalizedLibraryKeyword) {
@@ -487,6 +531,24 @@ function OptionsApp(): JSX.Element {
       return quote.includes(normalizedLibraryKeyword) || comment.includes(normalizedLibraryKeyword);
     });
   }, [normalizedLibraryKeyword, selectedAnnotations]);
+  const libraryTotalPages = React.useMemo(() => {
+    if (filteredSelectedAnnotations.length === 0) {
+      return 1;
+    }
+    return Math.ceil(filteredSelectedAnnotations.length / libraryPageSize);
+  }, [filteredSelectedAnnotations.length, libraryPageSize]);
+  React.useEffect(() => {
+    setLibraryPage(1);
+  }, [selectedURL, normalizedLibraryKeyword, libraryPageSize]);
+  React.useEffect(() => {
+    if (libraryPage > libraryTotalPages) {
+      setLibraryPage(libraryTotalPages);
+    }
+  }, [libraryPage, libraryTotalPages]);
+  const pagedFilteredSelectedAnnotations = React.useMemo(() => {
+    const start = (libraryPage - 1) * libraryPageSize;
+    return filteredSelectedAnnotations.slice(start, start + libraryPageSize);
+  }, [filteredSelectedAnnotations, libraryPage, libraryPageSize]);
 
   return (
     <main
@@ -836,54 +898,127 @@ function OptionsApp(): JSX.Element {
                 padding: 8,
                 minHeight: 300,
                 maxHeight: 520,
-                overflowY: "auto"
+                display: "flex",
+                flexDirection: "column"
               }}
             >
               <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700, color: "#486581" }}>
                 网址列表 ({filteredURLSummaries.length})
               </div>
-              {urlSummaries.length === 0 ? <div style={{ color: "#64748b", fontSize: 13 }}>暂无划词数据</div> : null}
-              {normalizedLibraryKeyword && libraryMatchedURLs === null ? (
-                <div style={{ color: "#64748b", fontSize: 13 }}>筛选中...</div>
-              ) : null}
-              {urlSummaries.length > 0 && filteredURLSummaries.length === 0 && libraryMatchedURLs !== null ? (
-                <div style={{ color: "#64748b", fontSize: 13 }}>暂无匹配网址</div>
-              ) : null}
-              {filteredURLSummaries.map((summary) => {
-                const selected = summary.url === selectedURL;
-                return (
-                  <button
-                    key={summary.url}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      border: selected ? "1px solid #2563eb" : "1px solid #dbe5f0",
-                      background: selected ? "#eff6ff" : "#fff",
-                      borderRadius: 8,
-                      padding: "8px",
-                      marginBottom: 6,
-                      cursor: "pointer"
-                    }}
-                    onClick={() => setSelectedURL(summary.url)}
-                  >
-                    <div
+              <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                {urlSummaries.length === 0 ? <div style={{ color: "#64748b", fontSize: 13 }}>暂无划词数据</div> : null}
+                {normalizedLibraryKeyword && libraryMatchedURLs === null ? (
+                  <div style={{ color: "#64748b", fontSize: 13 }}>筛选中...</div>
+                ) : null}
+                {urlSummaries.length > 0 && filteredURLSummaries.length === 0 && libraryMatchedURLs !== null ? (
+                  <div style={{ color: "#64748b", fontSize: 13 }}>暂无匹配网址</div>
+                ) : null}
+                {pagedFilteredURLSummaries.map((summary) => {
+                  const selected = summary.url === selectedURL;
+                  return (
+                    <button
+                      key={summary.url}
                       style={{
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: "#12314d",
-                        overflow: "hidden",
-                        display: "-webkit-box",
-                        WebkitBoxOrient: "vertical",
-                        WebkitLineClamp: 2
+                        width: "100%",
+                        textAlign: "left",
+                        border: selected ? "1px solid #2563eb" : "1px solid #dbe5f0",
+                        background: selected ? "#eff6ff" : "#fff",
+                        borderRadius: 8,
+                        padding: "8px",
+                        marginBottom: 6,
+                        cursor: "pointer"
+                      }}
+                      onClick={() => setSelectedURL(summary.url)}
+                    >
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 700,
+                          color: "#12314d",
+                          overflow: "hidden",
+                          display: "-webkit-box",
+                          WebkitBoxOrient: "vertical",
+                          WebkitLineClamp: 2
+                        }}
+                      >
+                        {summary.title || summary.url}
+                      </div>
+                      <div style={{ marginTop: 4, fontSize: 12, color: "#486581" }}>共 {summary.count} 条</div>
+                      <div style={{ marginTop: 2, fontSize: 11, color: "#829ab1" }}>最近更新: {formatTimestamp(summary.updatedAt)}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              {filteredURLSummaries.length > 0 ? (
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    flexWrap: "wrap"
+                  }}
+                >
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#486581", fontSize: 12 }}>
+                    每页
+                    <select
+                      value={libraryURLPageSize}
+                      onChange={(event) => setLibraryURLPageSize(Number(event.target.value))}
+                      style={{
+                        border: "1px solid #cbd5e1",
+                        borderRadius: 8,
+                        background: "#fff",
+                        color: "#0f172a",
+                        padding: "4px 8px",
+                        fontSize: 12
                       }}
                     >
-                      {summary.title || summary.url}
-                    </div>
-                    <div style={{ marginTop: 4, fontSize: 12, color: "#486581" }}>共 {summary.count} 条</div>
-                    <div style={{ marginTop: 2, fontSize: 11, color: "#829ab1" }}>最近更新: {formatTimestamp(summary.updatedAt)}</div>
-                  </button>
-                );
-              })}
+                      {LIBRARY_PAGE_SIZE_OPTIONS.map((size) => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <button
+                      onClick={() => setLibraryURLPage((current) => Math.max(1, current - 1))}
+                      disabled={libraryURLPage <= 1}
+                      style={{
+                        border: "1px solid #c6d4e3",
+                        borderRadius: 8,
+                        padding: "5px 8px",
+                        background: "#fff",
+                        color: "#2f4f6d",
+                        fontWeight: 700,
+                        cursor: libraryURLPage <= 1 ? "not-allowed" : "pointer",
+                        opacity: libraryURLPage <= 1 ? 0.6 : 1
+                      }}
+                    >
+                      上一页
+                    </button>
+                    <span style={{ color: "#486581", fontSize: 12 }}>
+                      第 {libraryURLPage}/{libraryURLTotalPages} 页
+                    </span>
+                    <button
+                      onClick={() => setLibraryURLPage((current) => Math.min(libraryURLTotalPages, current + 1))}
+                      disabled={libraryURLPage >= libraryURLTotalPages}
+                      style={{
+                        border: "1px solid #c6d4e3",
+                        borderRadius: 8,
+                        padding: "5px 8px",
+                        background: "#fff",
+                        color: "#2f4f6d",
+                        fontWeight: 700,
+                        cursor: libraryURLPage >= libraryURLTotalPages ? "not-allowed" : "pointer",
+                        opacity: libraryURLPage >= libraryURLTotalPages ? 0.6 : 1
+                      }}
+                    >
+                      下一页
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </aside>
 
             <section
@@ -894,7 +1029,8 @@ function OptionsApp(): JSX.Element {
                 padding: 10,
                 minHeight: 300,
                 maxHeight: 520,
-                overflowY: "auto"
+                display: "flex",
+                flexDirection: "column"
               }}
             >
               {selectedURL ? (
@@ -932,48 +1068,127 @@ function OptionsApp(): JSX.Element {
                     </a>
                   </div>
 
-                  {libraryLoading ? <p style={{ color: "#486581", fontSize: 13 }}>加载中...</p> : null}
-                  {libraryError ? <p style={{ color: "#dc2626", fontSize: 13 }}>{libraryError}</p> : null}
-                  {!libraryLoading && selectedAnnotations.length === 0 ? (
-                    <p style={{ color: "#64748b", fontSize: 13 }}>该网址暂无高亮内容</p>
-                  ) : null}
-                  {!libraryLoading && selectedAnnotations.length > 0 && filteredSelectedAnnotations.length === 0 ? (
-                    <p style={{ color: "#64748b", fontSize: 13 }}>未搜索到匹配高亮句子</p>
-                  ) : null}
-                  {filteredSelectedAnnotations.map((annotation) => (
-                    <article
-                      key={annotation.id}
-                      style={{
-                        border: "1px solid #dbe5f0",
-                        borderRadius: 10,
-                        padding: 10,
-                        marginBottom: 8,
-                        background: "#ffffff"
-                      }}
-                    >
-                      <div
+                  <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                    {libraryLoading ? <p style={{ color: "#486581", fontSize: 13 }}>加载中...</p> : null}
+                    {libraryError ? <p style={{ color: "#dc2626", fontSize: 13 }}>{libraryError}</p> : null}
+                    {!libraryLoading && selectedAnnotations.length === 0 ? (
+                      <p style={{ color: "#64748b", fontSize: 13 }}>该网址暂无高亮内容</p>
+                    ) : null}
+                    {!libraryLoading && selectedAnnotations.length > 0 && filteredSelectedAnnotations.length === 0 ? (
+                      <p style={{ color: "#64748b", fontSize: 13 }}>未搜索到匹配高亮句子</p>
+                    ) : null}
+                    {pagedFilteredSelectedAnnotations.map((annotation) => (
+                      <article
+                        key={annotation.id}
                         style={{
-                          borderRadius: 8,
-                          padding: "6px 8px",
-                          fontWeight: 700,
-                          lineHeight: 1.5,
-                          borderLeft: `3px solid ${annotation.color}`,
-                          background: `${annotation.color}40`
+                          border: "1px solid #dbe5f0",
+                          borderRadius: 10,
+                          padding: 10,
+                          marginBottom: 8,
+                          background: "#ffffff"
                         }}
                       >
-                        {annotation.quoteText}
+                        <div
+                          style={{
+                            borderRadius: 8,
+                            padding: "6px 8px",
+                            fontWeight: 700,
+                            lineHeight: 1.5,
+                            borderLeft: `3px solid ${annotation.color}`,
+                            background: `${annotation.color}40`
+                          }}
+                        >
+                          {annotation.quoteText}
+                        </div>
+                        <div style={{ marginTop: 8, color: "#486581", fontSize: 13, lineHeight: 1.45 }}>
+                          {annotation.commentText || "(无评论)"}
+                        </div>
+                        <div style={{ marginTop: 8, color: "#829ab1", fontSize: 12 }}>
+                          更新时间: {formatTimestamp(annotation.updatedAt)}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  {!libraryLoading && filteredSelectedAnnotations.length > 0 ? (
+                    <div
+                      style={{
+                        marginTop: 8,
+                        paddingTop: 8,
+                        borderTop: "1px solid #e2e8f0",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        background: "#fff"
+                      }}
+                    >
+                      <span style={{ color: "#486581", fontSize: 12 }}>
+                        共 {filteredSelectedAnnotations.length} 条
+                        {normalizedLibraryKeyword ? `（总 ${selectedAnnotations.length} 条）` : ""}
+                      </span>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#486581", fontSize: 12 }}>
+                        每页
+                        <select
+                          value={libraryPageSize}
+                          onChange={(event) => setLibraryPageSize(Number(event.target.value))}
+                          style={{
+                            border: "1px solid #cbd5e1",
+                            borderRadius: 8,
+                            background: "#fff",
+                            color: "#0f172a",
+                            padding: "4px 8px",
+                            fontSize: 12
+                          }}
+                        >
+                          {LIBRARY_PAGE_SIZE_OPTIONS.map((size) => (
+                            <option key={size} value={size}>
+                              {size}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <button
+                          onClick={() => setLibraryPage((current) => Math.max(1, current - 1))}
+                          disabled={libraryPage <= 1}
+                          style={{
+                            border: "1px solid #c6d4e3",
+                            borderRadius: 8,
+                            padding: "5px 8px",
+                            background: "#fff",
+                            color: "#2f4f6d",
+                            fontWeight: 700,
+                            cursor: libraryPage <= 1 ? "not-allowed" : "pointer",
+                            opacity: libraryPage <= 1 ? 0.6 : 1
+                          }}
+                        >
+                          上一页
+                        </button>
+                        <span style={{ color: "#486581", fontSize: 12 }}>
+                          第 {libraryPage}/{libraryTotalPages} 页
+                        </span>
+                        <button
+                          onClick={() => setLibraryPage((current) => Math.min(libraryTotalPages, current + 1))}
+                          disabled={libraryPage >= libraryTotalPages}
+                          style={{
+                            border: "1px solid #c6d4e3",
+                            borderRadius: 8,
+                            padding: "5px 8px",
+                            background: "#fff",
+                            color: "#2f4f6d",
+                            fontWeight: 700,
+                            cursor: libraryPage >= libraryTotalPages ? "not-allowed" : "pointer",
+                            opacity: libraryPage >= libraryTotalPages ? 0.6 : 1
+                          }}
+                        >
+                          下一页
+                        </button>
                       </div>
-                      <div style={{ marginTop: 8, color: "#486581", fontSize: 13, lineHeight: 1.45 }}>
-                        {annotation.commentText || "(无评论)"}
-                      </div>
-                      <div style={{ marginTop: 8, color: "#829ab1", fontSize: 12 }}>
-                        更新时间: {formatTimestamp(annotation.updatedAt)}
-                      </div>
-                    </article>
-                  ))}
+                    </div>
+                  ) : null}
                 </>
               ) : (
-                <p style={{ color: "#64748b", fontSize: 13 }}>
+                <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
                   {normalizedLibraryKeyword && filteredURLSummaries.length === 0
                     ? "未搜索到匹配网址"
                     : "请选择左侧网址查看该页划词评论"}
