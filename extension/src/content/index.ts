@@ -58,6 +58,11 @@ type ActiveEditColorPreview = {
   originalColor: string;
 };
 
+type ToolbarAnchor = {
+  preferredRect: DOMRect;
+  avoidRects: DOMRect[];
+};
+
 let toolbar: HTMLDivElement | null = null;
 let activeDraft: SelectionDraft | null = null;
 let activeEditColorPreview: ActiveEditColorPreview | null = null;
@@ -69,6 +74,9 @@ let mutationObserverStopTimer: number | null = null;
 let mutationRenderTimer: number | null = null;
 let storageRefreshTimer: number | null = null;
 let suppressToolbarOpenUntil = 0;
+let toolbarRepositionObserver: ResizeObserver | null = null;
+let toolbarRepositionFrameID: number | null = null;
+let toolbarRepositionAnchor: ToolbarAnchor | null = null;
 let activeDraftSelectionRange: Range | null = null;
 let dialogDefaultEnabled = true;
 let dialogSiteEnabledMap: Record<string, boolean> = {};
@@ -257,6 +265,15 @@ const revertActiveEditColorPreview = (): void => {
 };
 
 const hideToolbar = (options?: { revertEditColorPreview?: boolean }): void => {
+  if (toolbarRepositionFrameID !== null) {
+    window.cancelAnimationFrame(toolbarRepositionFrameID);
+    toolbarRepositionFrameID = null;
+  }
+  toolbarRepositionObserver?.disconnect();
+  toolbarRepositionObserver = null;
+  toolbarRepositionAnchor = null;
+  window.removeEventListener("scroll", scheduleToolbarReposition, true);
+  window.removeEventListener("resize", scheduleToolbarReposition, true);
   clearDraftSelectionPreview();
   activeMarkdownEditor?.destroy();
   activeMarkdownEditor = null;
@@ -615,7 +632,8 @@ const buildActionButton = (label: string, kind: "primary" | "ghost", onClick: ()
 
 const computeToolbarPosition = (
   rect: DOMRect,
-  toolbarElement: HTMLDivElement
+  toolbarElement: HTMLDivElement,
+  avoidRects: DOMRect[] = [rect]
 ): { top: number; left: number } => {
   const width = toolbarElement.offsetWidth;
   const height = toolbarElement.offsetHeight;
@@ -631,46 +649,47 @@ const computeToolbarPosition = (
   const clampLeft = (value: number): number => Math.min(Math.max(value, minLeft), Math.max(minLeft, maxLeft));
   const clampTop = (value: number): number => Math.min(Math.max(value, minTop), Math.max(minTop, maxTop));
 
-  const anchorRect = {
-    left: scrollX + rect.left,
-    top: scrollY + rect.top,
-    right: scrollX + rect.right,
-    bottom: scrollY + rect.bottom
-  };
-  const anchorAvoidRect = {
-    left: anchorRect.left - TOOLBAR_GAP,
-    top: anchorRect.top - TOOLBAR_GAP,
-    right: anchorRect.right + TOOLBAR_GAP,
-    bottom: anchorRect.bottom + TOOLBAR_GAP
-  };
+  const normalizedAvoidRects = (avoidRects.length > 0 ? avoidRects : [rect]).map((item) => ({
+    left: scrollX + item.left - TOOLBAR_GAP,
+    top: scrollY + item.top - TOOLBAR_GAP,
+    right: scrollX + item.right + TOOLBAR_GAP,
+    bottom: scrollY + item.bottom + TOOLBAR_GAP
+  }));
 
   const intersects = (top: number, left: number): boolean => {
     const right = left + width;
     const bottom = top + height;
-    if (right <= anchorAvoidRect.left) {
-      return false;
+    for (const avoidRect of normalizedAvoidRects) {
+      if (right <= avoidRect.left) {
+        continue;
+      }
+      if (left >= avoidRect.right) {
+        continue;
+      }
+      if (bottom <= avoidRect.top) {
+        continue;
+      }
+      if (top >= avoidRect.bottom) {
+        continue;
+      }
+      return true;
     }
-    if (left >= anchorAvoidRect.right) {
-      return false;
-    }
-    if (bottom <= anchorAvoidRect.top) {
-      return false;
-    }
-    if (top >= anchorAvoidRect.bottom) {
-      return false;
-    }
-    return true;
+    return false;
   };
 
   const overlapArea = (top: number, left: number): number => {
-    const overlapLeft = Math.max(left, anchorAvoidRect.left);
-    const overlapTop = Math.max(top, anchorAvoidRect.top);
-    const overlapRight = Math.min(left + width, anchorAvoidRect.right);
-    const overlapBottom = Math.min(top + height, anchorAvoidRect.bottom);
-    if (overlapRight <= overlapLeft || overlapBottom <= overlapTop) {
-      return 0;
+    let area = 0;
+    for (const avoidRect of normalizedAvoidRects) {
+      const overlapLeft = Math.max(left, avoidRect.left);
+      const overlapTop = Math.max(top, avoidRect.top);
+      const overlapRight = Math.min(left + width, avoidRect.right);
+      const overlapBottom = Math.min(top + height, avoidRect.bottom);
+      if (overlapRight <= overlapLeft || overlapBottom <= overlapTop) {
+        continue;
+      }
+      area += (overlapRight - overlapLeft) * (overlapBottom - overlapTop);
     }
-    return (overlapRight - overlapLeft) * (overlapBottom - overlapTop);
+    return area;
   };
 
   const centerLeft = scrollX + rect.left + rect.width / 2 - width / 2;
@@ -709,6 +728,55 @@ const computeToolbarPosition = (
     }
   }
   return bestCandidate;
+};
+
+function scheduleToolbarReposition(): void {
+  if (!toolbar || !toolbarRepositionAnchor) {
+    return;
+  }
+  if (toolbarRepositionFrameID !== null) {
+    window.cancelAnimationFrame(toolbarRepositionFrameID);
+  }
+  toolbarRepositionFrameID = window.requestAnimationFrame(() => {
+    toolbarRepositionFrameID = null;
+    if (!toolbar || !toolbarRepositionAnchor) {
+      return;
+    }
+    const { top, left } = computeToolbarPosition(
+      toolbarRepositionAnchor.preferredRect,
+      toolbar,
+      toolbarRepositionAnchor.avoidRects
+    );
+    toolbar.style.top = `${top}px`;
+    toolbar.style.left = `${left}px`;
+  });
+}
+
+const setupToolbarAutoReposition = (
+  toolbarElement: HTMLDivElement,
+  preferredRect: DOMRect,
+  avoidRects: DOMRect[] = [preferredRect]
+): void => {
+  const cloneRect = (source: DOMRect): DOMRect => new DOMRect(source.x, source.y, source.width, source.height);
+  toolbarRepositionAnchor = {
+    preferredRect: cloneRect(preferredRect),
+    avoidRects: avoidRects.length > 0 ? avoidRects.map(cloneRect) : [cloneRect(preferredRect)]
+  };
+  toolbarRepositionObserver?.disconnect();
+  toolbarRepositionObserver = null;
+  window.removeEventListener("scroll", scheduleToolbarReposition, true);
+  window.removeEventListener("resize", scheduleToolbarReposition, true);
+  if (typeof ResizeObserver === "function") {
+    toolbarRepositionObserver = new ResizeObserver(() => {
+      scheduleToolbarReposition();
+    });
+    toolbarRepositionObserver.observe(toolbarElement);
+  }
+  window.addEventListener("scroll", scheduleToolbarReposition, true);
+  window.addEventListener("resize", scheduleToolbarReposition, true);
+  scheduleToolbarReposition();
+  window.setTimeout(scheduleToolbarReposition, 0);
+  window.setTimeout(scheduleToolbarReposition, 80);
 };
 
 const setDrawerOpen = (next: boolean): void => {
@@ -824,6 +892,9 @@ const showCreateToolbar = (range: Range): void => {
   if (!rect || (rect.width === 0 && rect.height === 0)) {
     return;
   }
+  const clientRects = Array.from(range.getClientRects()).filter((item) => item.width > 0 && item.height > 0);
+  const avoidRects = clientRects.length > 0 ? clientRects : [rect];
+  const preferredRect = avoidRects[avoidRects.length - 1] ?? rect;
 
   const selectedText = range.toString().trim();
   const position = extractPosition(range);
@@ -958,13 +1029,8 @@ const showCreateToolbar = (range: Range): void => {
   actionRow.append(cancelButton, highlightOnlyButton, saveCommentButton);
   nextToolbar.append(heading, colorRow, commentEditor.container, errorText, actionRow);
   document.body.appendChild(nextToolbar);
-
-  const { top, left } = computeToolbarPosition(rect, nextToolbar);
-
-  nextToolbar.style.top = `${top}px`;
-  nextToolbar.style.left = `${left}px`;
-
   toolbar = nextToolbar;
+  setupToolbarAutoReposition(nextToolbar, preferredRect, avoidRects);
 };
 
 const escapeForAttributeSelector = (value: string): string => {
@@ -1089,12 +1155,8 @@ const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
   actionRow.append(cancelButton, saveButton);
   nextToolbar.append(heading, subtitle, colorRow, quotePreview, commentEditor.container, errorText, actionRow);
   document.body.appendChild(nextToolbar);
-
-  const { top, left } = computeToolbarPosition(anchorRect, nextToolbar);
-  nextToolbar.style.top = `${top}px`;
-  nextToolbar.style.left = `${left}px`;
-
   toolbar = nextToolbar;
+  setupToolbarAutoReposition(nextToolbar, anchorRect, [anchorRect]);
   window.setTimeout(() => {
     commentEditor.focus();
   }, 0);

@@ -417,6 +417,48 @@
   --color-attention-subtle: #fff8c5;
   --color-danger-fg: #cf222e;
   --color-success-fg: #1a7f37;
+  --annota-fs-title-size: 18px;
+  --annota-fs-subtitle-size: 13px;
+  --annota-fs-mode-btn-min-width: 96px;
+  --annota-fs-mode-btn-height: 38px;
+  --annota-fs-mode-btn-font-size: 15px;
+  --annota-fs-toolbar-height: 54px;
+  --annota-fs-toolbar-btn-size: 34px;
+  --annota-fs-toolbar-icon-size: 18px;
+  --annota-fs-editor-font-size: 18px;
+  --annota-fs-editor-line-height: 1.7;
+  --annota-fs-preview-font-size: 18px;
+  --annota-fs-preview-line-height: 1.72;
+}
+
+.annota-fullscreen-dialog[data-density="compact"] {
+  --annota-fs-title-size: 16px;
+  --annota-fs-subtitle-size: 12px;
+  --annota-fs-mode-btn-min-width: 86px;
+  --annota-fs-mode-btn-height: 34px;
+  --annota-fs-mode-btn-font-size: 14px;
+  --annota-fs-toolbar-height: 46px;
+  --annota-fs-toolbar-btn-size: 30px;
+  --annota-fs-toolbar-icon-size: 16px;
+  --annota-fs-editor-font-size: 16px;
+  --annota-fs-editor-line-height: 1.62;
+  --annota-fs-preview-font-size: 16px;
+  --annota-fs-preview-line-height: 1.62;
+}
+
+.annota-fullscreen-dialog[data-density="large"] {
+  --annota-fs-title-size: 20px;
+  --annota-fs-subtitle-size: 14px;
+  --annota-fs-mode-btn-min-width: 106px;
+  --annota-fs-mode-btn-height: 42px;
+  --annota-fs-mode-btn-font-size: 16px;
+  --annota-fs-toolbar-height: 60px;
+  --annota-fs-toolbar-btn-size: 38px;
+  --annota-fs-toolbar-icon-size: 20px;
+  --annota-fs-editor-font-size: 20px;
+  --annota-fs-editor-line-height: 1.76;
+  --annota-fs-preview-font-size: 20px;
+  --annota-fs-preview-line-height: 1.78;
 }
 
 .annota-fullscreen-overlay,
@@ -449,6 +491,7 @@
 
 .annota-fullscreen-topbar {
   border-bottom: 1px solid #e1e8f4;
+  position: relative;
 }
 
 .annota-fullscreen-bottombar {
@@ -465,11 +508,13 @@
 }
 
 .annota-fullscreen-topbar-left {
-  min-width: 240px;
+  min-width: 0;
+  flex: 1 1 0;
 }
 
 .annota-fullscreen-topbar-right {
-  min-width: auto;
+  min-width: 0;
+  flex: 1 1 0;
   justify-content: flex-end;
 }
 
@@ -481,14 +526,14 @@
 
 .annota-fullscreen-title {
   color: #0f172a;
-  font-size: 16px;
+  font-size: var(--annota-fs-title-size);
   font-weight: 700;
   line-height: 1.2;
 }
 
 .annota-fullscreen-subtitle {
   color: #64748b;
-  font-size: 12px;
+  font-size: var(--annota-fs-subtitle-size);
   line-height: 1.2;
 }
 
@@ -542,18 +587,22 @@
   border-radius: 11px;
   border: 1px solid #d9e3f0;
   background: #f2f6fb;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
 }
 
 .annota-fullscreen-mode-toggle button {
   all: unset;
   box-sizing: border-box;
-  min-width: 84px;
+  min-width: var(--annota-fs-mode-btn-min-width);
   text-align: center;
-  height: 33px;
-  padding: 0 10px;
+  height: var(--annota-fs-mode-btn-height);
+  padding: 0 12px;
   border-radius: 9px;
   color: #475569;
-  font-size: 13px;
+  font-size: var(--annota-fs-mode-btn-font-size);
   font-weight: 700;
   cursor: pointer;
 }
@@ -601,6 +650,28 @@
   border-right: 0;
   border-bottom: 1px solid #e2e8f0;
   background: #fbfdff;
+  min-height: var(--annota-fs-toolbar-height);
+  padding: 6px 10px;
+}
+
+.annota-uiw-editor-fullscreen .w-md-editor-toolbar ul {
+  gap: 6px;
+}
+
+.annota-uiw-editor-fullscreen .w-md-editor-toolbar li button {
+  min-width: var(--annota-fs-toolbar-btn-size);
+  height: var(--annota-fs-toolbar-btn-size);
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: var(--annota-fs-toolbar-icon-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.annota-uiw-editor-fullscreen .w-md-editor-toolbar li button svg {
+  width: var(--annota-fs-toolbar-icon-size);
+  height: var(--annota-fs-toolbar-icon-size);
 }
 
 .annota-uiw-editor-fullscreen .w-md-editor-text {
@@ -624,8 +695,8 @@
 
 .annota-uiw-editor-fullscreen .w-md-editor-text-input {
   padding: 16px 18px !important;
-  line-height: 1.65 !important;
-  font-size: 16px !important;
+  line-height: var(--annota-fs-editor-line-height) !important;
+  font-size: var(--annota-fs-editor-font-size) !important;
   caret-color: #111827 !important;
   background: #ffffff !important;
 }
@@ -712,6 +783,38 @@
   background: #ffffff !important;
   color: #111827 !important;
   color-scheme: light !important;
+  font-size: var(--annota-fs-preview-font-size);
+  line-height: var(--annota-fs-preview-line-height);
+}
+
+.annota-fullscreen-density-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 11px;
+  border: 1px solid #d9e3f0;
+  background: #f7fbff;
+}
+
+.annota-fullscreen-density-toggle button {
+  all: unset;
+  box-sizing: border-box;
+  min-width: 34px;
+  height: 30px;
+  border-radius: 8px;
+  padding: 0 10px;
+  text-align: center;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.annota-fullscreen-density-toggle button[data-active="true"] {
+  background: #ffffff;
+  color: #1d4ed8;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
 .annota-fullscreen-preview-prose .wmde-markdown pre,
@@ -927,6 +1030,16 @@
     padding: 0 6px;
     font-size: 12px;
     height: 30px;
+  }
+
+  .annota-fullscreen-mode-toggle {
+    position: static;
+    left: auto;
+    transform: none;
+  }
+
+  .annota-fullscreen-density-toggle {
+    display: none;
   }
 
   .annota-fullscreen-main {

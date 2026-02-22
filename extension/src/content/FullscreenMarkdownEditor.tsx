@@ -31,6 +31,12 @@ type FullscreenMarkdownEditorProps = {
 
 const MIN_SPLIT_WIDTH = 900;
 const SPLIT_RATIO_KEY = "annota:fullscreenSplitRatio";
+const DENSITY_KEY = "annota:fullscreenDensity";
+
+type DensityMode = "compact" | "comfortable" | "large";
+
+const isDensityMode = (value: string): value is DensityMode =>
+  value === "compact" || value === "comfortable" || value === "large";
 
 const getEditorTextarea = (root: HTMLElement | null): HTMLTextAreaElement | null =>
   root?.querySelector<HTMLTextAreaElement>("textarea.w-md-editor-text-input") ?? null;
@@ -104,6 +110,17 @@ export const FullscreenMarkdownEditor = ({
   const [helpOpen, setHelpOpen] = React.useState(false);
   const [confirmAction, setConfirmAction] = React.useState<"exit" | "cancel" | null>(null);
   const [lightbox, setLightbox] = React.useState<{ src: string; alt: string } | null>(null);
+  const [density, setDensity] = React.useState<DensityMode>(() => {
+    try {
+      const raw = window.localStorage.getItem(DENSITY_KEY);
+      if (raw && isDensityMode(raw)) {
+        return raw;
+      }
+    } catch {
+      // ignore read failure
+    }
+    return "comfortable";
+  });
   const [splitRatio, setSplitRatio] = React.useState(() => {
     const raw = window.localStorage.getItem(SPLIT_RATIO_KEY);
     const parsed = raw ? Number(raw) : NaN;
@@ -294,6 +311,14 @@ export const FullscreenMarkdownEditor = ({
     window.localStorage.setItem(SPLIT_RATIO_KEY, splitRatio.toString());
   }, [splitRatio]);
 
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem(DENSITY_KEY, density);
+    } catch {
+      // ignore write failure
+    }
+  }, [density]);
+
   const beginResize = React.useCallback((startEvent: React.PointerEvent<HTMLDivElement>) => {
     if (!splitRef.current) {
       return;
@@ -393,6 +418,7 @@ export const FullscreenMarkdownEditor = ({
       <div
         className="annota-fullscreen-dialog"
         data-color-mode="light"
+        data-density={density}
         ref={overlayRef}
         role="dialog"
         aria-modal="true"
@@ -442,6 +468,17 @@ export const FullscreenMarkdownEditor = ({
             </button>
           </div>
           <div className="annota-fullscreen-topbar-right">
+            <div className="annota-fullscreen-density-toggle" role="group" aria-label="字号密度切换">
+              <button type="button" data-active={density === "compact"} onClick={() => setDensity("compact")}>
+                小
+              </button>
+              <button type="button" data-active={density === "comfortable"} onClick={() => setDensity("comfortable")}>
+                中
+              </button>
+              <button type="button" data-active={density === "large"} onClick={() => setDensity("large")}>
+                大
+              </button>
+            </div>
             <div className="annota-fullscreen-help-wrap">
               <button
                 type="button"
