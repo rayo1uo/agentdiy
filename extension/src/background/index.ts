@@ -26,6 +26,9 @@ import type {
 const STORAGE_KEY = {
   syncEnabled: "settings:syncEnabled",
   apiBaseURL: "settings:apiBaseUrl",
+  dialogDefaultEnabled: "settings:dialogDefaultEnabled",
+  dialogSiteMap: "settings:dialogSiteEnabledMap",
+  legacyDialogEnabled: "settings:dialogEnabledByAction",
   accessToken: "auth:accessToken",
   refreshToken: "auth:refreshToken",
   deviceID: "sync:deviceId",
@@ -82,6 +85,42 @@ const makeOperationID = (): string => {
 };
 
 const normalizeBaseURL = (value: string): string => value.trim().replace(/\/+$/, "");
+const DEFAULT_DIALOG_ENABLED = true;
+type DialogSiteMap = Record<string, boolean>;
+
+const parseSiteScope = (value: string): string | null => {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+};
+
+const normalizeDialogSiteMap = (raw: unknown): DialogSiteMap => {
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+  const next: DialogSiteMap = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof key === "string" && typeof value === "boolean" && key.trim()) {
+      next[key] = value;
+    }
+  }
+  return next;
+};
+
+type DialogSettings = {
+  defaultEnabled: boolean;
+  siteMap: DialogSiteMap;
+};
 
 const createAnnotation = (payload: AnnotationCreateInput): Annotation => {
   const now = nowISO();
@@ -328,6 +367,111 @@ const loadSyncConfig = async (): Promise<SyncConfig> => {
     deviceName: navigator.platform || "unknown-device",
     platform: navigator.platform?.toLowerCase().includes("mac") ? "mac" : "windows"
   };
+};
+
+const loadDialogSettings = async (): Promise<DialogSettings> => {
+  const result = await chrome.storage.sync.get([
+    STORAGE_KEY.dialogDefaultEnabled,
+    STORAGE_KEY.dialogSiteMap,
+    STORAGE_KEY.legacyDialogEnabled
+  ]);
+  const defaultRaw = result[STORAGE_KEY.dialogDefaultEnabled];
+  const legacyRaw = result[STORAGE_KEY.legacyDialogEnabled];
+  const defaultEnabled =
+    typeof defaultRaw === "boolean"
+      ? defaultRaw
+      : typeof legacyRaw === "boolean"
+        ? legacyRaw
+        : DEFAULT_DIALOG_ENABLED;
+  const siteMap = normalizeDialogSiteMap(result[STORAGE_KEY.dialogSiteMap]);
+  return { defaultEnabled, siteMap };
+};
+
+const ensureDialogSettings = async (): Promise<DialogSettings> => {
+  const result = await chrome.storage.sync.get([
+    STORAGE_KEY.dialogDefaultEnabled,
+    STORAGE_KEY.dialogSiteMap,
+    STORAGE_KEY.legacyDialogEnabled
+  ]);
+  const defaultRaw = result[STORAGE_KEY.dialogDefaultEnabled];
+  const legacyRaw = result[STORAGE_KEY.legacyDialogEnabled];
+  const siteMapRaw = result[STORAGE_KEY.dialogSiteMap];
+
+  const defaultEnabled =
+    typeof defaultRaw === "boolean"
+      ? defaultRaw
+      : typeof legacyRaw === "boolean"
+        ? legacyRaw
+        : DEFAULT_DIALOG_ENABLED;
+  const siteMap = normalizeDialogSiteMap(siteMapRaw);
+
+  const patch: Record<string, unknown> = {};
+  if (typeof defaultRaw !== "boolean") {
+    patch[STORAGE_KEY.dialogDefaultEnabled] = defaultEnabled;
+  }
+  if (!siteMapRaw || typeof siteMapRaw !== "object") {
+    patch[STORAGE_KEY.dialogSiteMap] = siteMap;
+  }
+  if (Object.keys(patch).length > 0) {
+    await chrome.storage.sync.set(patch);
+  }
+  return { defaultEnabled, siteMap };
+};
+
+const resolveDialogEnabledForURL = (url: string, settings: DialogSettings): boolean => {
+  const scope = parseSiteScope(url);
+  if (!scope) {
+    return settings.defaultEnabled;
+  }
+  if (Object.prototype.hasOwnProperty.call(settings.siteMap, scope)) {
+    return settings.siteMap[scope];
+  }
+  return settings.defaultEnabled;
+};
+
+const setActionAppearance = async (enabled: boolean, tabID?: number, scope?: string): Promise<void> => {
+  const details = tabID != null ? { tabId: tabID } : {};
+  const setBadgeTextColor =
+    typeof chrome.action.setBadgeTextColor === "function"
+      ? chrome.action.setBadgeTextColor({
+          ...details,
+          color: enabled ? "#ffffff" : "#0f172a"
+        })
+      : Promise.resolve();
+  await Promise.all([
+    chrome.action.setBadgeText({ ...details, text: enabled ? "ON" : "OFF" }),
+    chrome.action.setBadgeBackgroundColor({
+      ...details,
+      color: enabled ? "#1e3a8a" : "#cbd5e1"
+    }),
+    setBadgeTextColor,
+    chrome.action.setTitle({
+      ...details,
+      title: enabled
+        ? `Annota MVP: 当前网页高亮已开启${scope ? `（${scope}）` : ""}`
+        : `Annota MVP: 当前网页高亮已关闭${scope ? `（${scope}）` : ""}`
+    })
+  ]);
+};
+
+const resolveTargetTab = async (tabID?: number): Promise<chrome.tabs.Tab | null> => {
+  if (typeof tabID === "number") {
+    try {
+      return await chrome.tabs.get(tabID);
+    } catch {
+      return null;
+    }
+  }
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab ?? null;
+};
+
+const refreshActionAppearance = async (tabID?: number): Promise<void> => {
+  const [settings, tab] = await Promise.all([loadDialogSettings(), resolveTargetTab(tabID)]);
+  const url = tab?.url ?? "";
+  const scope = parseSiteScope(url) ?? "";
+  const enabled = resolveDialogEnabledForURL(url, settings);
+  await setActionAppearance(enabled, tab?.id, scope);
 };
 
 const saveTokens = async (accessToken: string, refreshToken: string): Promise<void> => {
@@ -1168,8 +1312,8 @@ const ok = <T>(data: T): RuntimeResponse<T> => ({ ok: true, data });
 const fail = (error: string): RuntimeResponse => ({ ok: false, error });
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {
-    // Side panel is optional in some environments.
+  void ensureDialogSettings().then(() => refreshActionAppearance()).catch(() => {
+    // Ignore appearance init errors.
   });
 
   chrome.alarms.create(SYNC_ALARM_NAME, {
@@ -1178,10 +1322,79 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  void refreshActionAppearance().catch(() => {
+    // Ignore appearance init errors.
+  });
   chrome.alarms.create(SYNC_ALARM_NAME, {
     periodInMinutes: 2
   });
   scheduleSync("runtime-startup");
+});
+
+chrome.action.onClicked.addListener((tab) => {
+  void (async () => {
+    const url = tab.url ?? "";
+    const scope = parseSiteScope(url);
+    if (!scope) {
+      await refreshActionAppearance(tab.id);
+      return;
+    }
+
+    const settings = await loadDialogSettings();
+    const current = resolveDialogEnabledForURL(url, settings);
+    const next = !current;
+    const nextSiteMap: DialogSiteMap = { ...settings.siteMap };
+    if (next === settings.defaultEnabled) {
+      delete nextSiteMap[scope];
+    } else {
+      nextSiteMap[scope] = next;
+    }
+
+    await chrome.storage.sync.set({ [STORAGE_KEY.dialogSiteMap]: nextSiteMap });
+    await setActionAppearance(next, tab.id, scope);
+  })();
+});
+
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  void refreshActionAppearance(activeInfo.tabId).catch(() => {
+    // Ignore appearance refresh errors.
+  });
+});
+
+chrome.tabs.onUpdated.addListener((tabID, changeInfo) => {
+  if (changeInfo.status === "loading" || typeof changeInfo.url === "string") {
+    void refreshActionAppearance(tabID).catch(() => {
+      // Ignore appearance refresh errors.
+    });
+  }
+});
+
+chrome.windows.onFocusChanged.addListener((windowID) => {
+  if (windowID === chrome.windows.WINDOW_ID_NONE) {
+    return;
+  }
+  void (async () => {
+    const [tab] = await chrome.tabs.query({ active: true, windowId: windowID });
+    if (tab?.id != null) {
+      await refreshActionAppearance(tab.id);
+    }
+  })();
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "sync") {
+    return;
+  }
+  if (
+    !changes[STORAGE_KEY.dialogDefaultEnabled] &&
+    !changes[STORAGE_KEY.dialogSiteMap] &&
+    !changes[STORAGE_KEY.legacyDialogEnabled]
+  ) {
+    return;
+  }
+  void refreshActionAppearance().catch(() => {
+    // Ignore appearance refresh errors.
+  });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {

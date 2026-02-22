@@ -3,6 +3,106 @@
   color: #0f172a;
 }
 
+.annota-drawer-root {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2147483644;
+  pointer-events: none;
+}
+
+.annota-drawer-root[data-enabled="false"] {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.annota-drawer-rail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  transform: translateX(calc(100% - 62px));
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.annota-drawer-rail[data-open="true"] {
+  transform: translateX(0);
+}
+
+.annota-drawer-dock {
+  pointer-events: auto;
+  margin-right: 12px;
+  padding: 9px 8px;
+  border-radius: 16px;
+  background: rgba(230, 230, 240, 0.86);
+  box-shadow: -8px 10px 24px rgba(15, 23, 42, 0.2);
+  transition: padding 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.annota-drawer-dock:hover {
+  padding-left: 10px;
+  padding-right: 10px;
+  background: rgba(234, 236, 245, 0.94);
+  box-shadow: -10px 12px 28px rgba(15, 23, 42, 0.24);
+}
+
+.annota-drawer-item {
+  all: initial;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(91, 111, 152, 0.18);
+  background: linear-gradient(160deg, #7f67ff 0%, #5b4df3 55%, #4b35d8 100%);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(53, 56, 174, 0.35);
+  transition: transform 160ms ease, filter 160ms ease, box-shadow 160ms ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.annota-drawer-item:hover {
+  transform: translateX(-1px) scale(1.03);
+  filter: brightness(1.03);
+}
+
+.annota-drawer-item[data-active="true"] {
+  box-shadow: 0 10px 24px rgba(53, 56, 174, 0.45);
+}
+
+.annota-drawer-item-icon {
+  color: #ffffff;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.annota-drawer-panel {
+  pointer-events: auto;
+  width: min(460px, 96vw);
+  height: 100%;
+  border: 1px solid #d6e2f2;
+  border-right: none;
+  border-radius: 18px 0 0 18px;
+  background: rgba(248, 252, 255, 0.96);
+  box-shadow: -14px 0 30px rgba(15, 23, 42, 0.16);
+  overflow: hidden;
+  backdrop-filter: blur(3px);
+}
+
+.annota-drawer-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
 .annota-toolbar {
   all: initial;
   position: absolute;
@@ -10,8 +110,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: var(--annota-toolbar-width, 320px);
-  max-width: min(92vw, var(--annota-toolbar-width, 320px));
+  width: max(var(--annota-toolbar-width, 320px), 420px);
+  max-width: min(94vw, 640px);
   padding: 12px;
   border-radius: 12px;
   border: 1px solid #d1d5db;
@@ -64,28 +164,795 @@
   border-color: #1f2937;
 }
 
-.annota-comment-input {
-  all: unset;
-  display: block;
-  width: 100%;
-  resize: vertical;
-  min-height: 64px;
-  border-radius: 8px;
+.annota-comment-editor {
   border: 1px solid #d1d5db;
-  padding: 8px;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.annota-comment-editor:focus-within {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.35);
+}
+
+.annota-comment-editor-uiw {
+  overflow: hidden;
+}
+
+.annota-uiw-editor-shell {
+  background: #ffffff;
+}
+
+.annota-comment-editor-uiw .w-md-editor {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: #ffffff;
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  padding: 8px 8px;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #fbfdff 0%, #f5f9ff 100%);
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar > ul {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 1px;
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar > ul:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar > ul:first-child::-webkit-scrollbar {
+  display: none;
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar > ul:last-child {
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar li {
+  flex: 0 0 auto;
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar > ul:first-child li button {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  color: #475569;
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar li.active > button,
+.annota-comment-editor-uiw .w-md-editor-toolbar li button:hover {
+  color: #1e293b;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar-divider {
+  margin: 0 2px;
+}
+
+.annota-comment-editor-uiw .annota-uiw-mode-command-btn {
+  width: auto;
+  min-width: unset;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid #d7e2ef;
+  background: #ffffff;
+  color: #64748b;
+  margin: 0;
+}
+
+.annota-comment-editor-uiw .annota-uiw-fullscreen-command-btn {
+  width: 26px;
+  min-width: 26px;
+  height: 24px;
+  border-radius: 7px;
+  border: 1px solid #d7e2ef;
+  background: #ffffff;
+  color: #64748b;
+  margin: 0;
+}
+
+.annota-comment-editor-uiw .annota-uiw-fullscreen-command-btn:hover {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar li.active > .annota-uiw-fullscreen-command-btn {
+  border-color: #d7e2ef;
+  color: #64748b;
+  background: #ffffff;
+}
+
+.annota-comment-editor-uiw .annota-uiw-fullscreen-command-label {
+  display: inline-block;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.annota-comment-editor-uiw .w-md-editor-toolbar > ul:last-child li.active .annota-uiw-mode-command-btn {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.annota-comment-editor-uiw .annota-uiw-mode-command-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.annota-comment-editor-uiw .annota-uiw-mode-command-label {
   font-size: 12px;
-  line-height: 1.4;
-  font-family: inherit;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.annota-comment-editor-uiw .w-md-editor-text {
+  min-height: 180px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.annota-comment-editor-uiw .w-md-editor-text-pre,
+.annota-comment-editor-uiw .w-md-editor-text-input {
+  min-height: 180px !important;
+  max-height: 320px !important;
+  padding: 12px !important;
+  line-height: 1.55 !important;
+  font-size: 13px !important;
+}
+
+.annota-comment-editor-uiw .w-md-editor-text-pre {
+  display: none !important;
+}
+
+.annota-comment-editor-uiw .w-md-editor-text-input {
   color: #111827 !important;
   -webkit-text-fill-color: #111827 !important;
   caret-color: #111827 !important;
-  background: #ffffff;
-  box-sizing: border-box;
+  position: relative !important;
+  overflow: auto !important;
 }
 
-.annota-comment-input::placeholder {
+.annota-comment-editor-uiw .w-md-editor-text-input::placeholder {
   color: #6b7280 !important;
   -webkit-text-fill-color: #6b7280 !important;
+}
+
+.annota-comment-editor-uiw .wmde-markdown-var,
+.annota-comment-editor-uiw .w-md-editor,
+.annota-comment-editor-uiw .w-md-editor-preview,
+.annota-comment-editor-uiw .w-md-editor-preview .wmde-markdown,
+.annota-comment-editor-uiw .w-md-editor-preview .wmde-markdown-var {
+  --color-canvas-default: #ffffff !important;
+  --color-canvas-subtle: #f8fafc !important;
+  --color-fg-default: #111827 !important;
+  --color-fg-muted: #4b5563 !important;
+  --color-border-default: #d1d5db !important;
+  background: #ffffff !important;
+  color: #111827 !important;
+  color-scheme: light !important;
+}
+
+.annota-comment-editor-uiw .wmde-markdown {
+  background: transparent;
+  color: #0f172a;
+}
+
+.annota-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  color-scheme: light;
+}
+
+.annota-fullscreen-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.38);
+  backdrop-filter: blur(3px);
+}
+
+.annota-fullscreen-dialog {
+  position: relative;
+  width: min(1360px, 100%);
+  height: min(96vh, 1200px);
+  border-radius: 18px;
+  border: 1px solid #d6e2f2;
+  background: #f8fbff;
+  box-shadow: 0 22px 56px rgba(15, 23, 42, 0.28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color-scheme: light;
+  --color-prettylights-syntax-comment: #6e7781;
+  --color-prettylights-syntax-constant: #0550ae;
+  --color-prettylights-syntax-entity: #8250df;
+  --color-prettylights-syntax-storage-modifier-import: #24292f;
+  --color-prettylights-syntax-entity-tag: #116329;
+  --color-prettylights-syntax-keyword: #cf222e;
+  --color-prettylights-syntax-string: #0a3069;
+  --color-prettylights-syntax-variable: #953800;
+  --color-prettylights-syntax-markup-list: #3b2300;
+  --color-prettylights-syntax-markup-heading: #0550ae;
+  --color-prettylights-syntax-markup-italic: #24292f;
+  --color-prettylights-syntax-markup-bold: #24292f;
+  --color-fg-default: #24292f;
+  --color-fg-muted: #57606a;
+  --color-fg-subtle: #6e7781;
+  --color-canvas-default: #ffffff;
+  --color-canvas-subtle: #f6f8fa;
+  --color-border-default: #d0d7de;
+  --color-border-muted: #d8dee4;
+  --color-neutral-muted: rgba(175, 184, 193, 0.2);
+  --color-accent-fg: #0969da;
+  --color-accent-emphasis: #0969da;
+  --color-attention-subtle: #fff8c5;
+  --color-danger-fg: #cf222e;
+  --color-success-fg: #1a7f37;
+}
+
+.annota-fullscreen-overlay,
+.annota-fullscreen-overlay .wmde-markdown-var,
+.annota-fullscreen-overlay .wmde-markdown,
+.annota-fullscreen-dialog {
+  --color-canvas-default: #ffffff !important;
+  --color-canvas-subtle: #f8fafc !important;
+  --color-fg-default: #111827 !important;
+  --color-fg-muted: #4b5563 !important;
+  --color-border-default: #d1d5db !important;
+  --color-border-muted: #e5e7eb !important;
+  --color-neutral-muted: rgba(148, 163, 184, 0.22) !important;
+  --color-accent-fg: #2563eb !important;
+  --color-accent-emphasis: #2563eb !important;
+  color-scheme: light !important;
+}
+
+.annota-fullscreen-topbar,
+.annota-fullscreen-bottombar {
+  flex: 0 0 auto;
+  min-height: 56px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #ffffff;
+}
+
+.annota-fullscreen-topbar {
+  border-bottom: 1px solid #e1e8f4;
+}
+
+.annota-fullscreen-bottombar {
+  border-top: 1px solid #e1e8f4;
+}
+
+.annota-fullscreen-topbar-left,
+.annota-fullscreen-topbar-right,
+.annota-fullscreen-actions,
+.annota-fullscreen-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.annota-fullscreen-topbar-left {
+  min-width: 240px;
+}
+
+.annota-fullscreen-topbar-right {
+  min-width: auto;
+  justify-content: flex-end;
+}
+
+.annota-fullscreen-title-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.annota-fullscreen-title {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.annota-fullscreen-subtitle {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.annota-fullscreen-topbar-btn {
+  all: unset;
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid #cbd5e1;
+  background: #f8fbff;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.annota-fullscreen-topbar-btn:hover {
+  border-color: #a5c5f5;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.annota-fullscreen-topbar-icon-btn {
+  all: unset;
+  box-sizing: border-box;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid #cbd5e1;
+  background: #f8fbff;
+  color: #334155;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 32px;
+  cursor: pointer;
+}
+
+.annota-fullscreen-topbar-icon-btn:hover {
+  border-color: #a5c5f5;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.annota-fullscreen-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 11px;
+  border: 1px solid #d9e3f0;
+  background: #f2f6fb;
+}
+
+.annota-fullscreen-mode-toggle button {
+  all: unset;
+  box-sizing: border-box;
+  min-width: 84px;
+  text-align: center;
+  height: 33px;
+  padding: 0 10px;
+  border-radius: 9px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.annota-fullscreen-mode-toggle button[data-active="true"] {
+  background: #ffffff;
+  color: #1d4ed8;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.annota-fullscreen-mode-toggle button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.annota-fullscreen-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #f8fbff 0%, #f5f9ff 100%);
+}
+
+.annota-fullscreen-editor-wrap {
+  height: 100%;
+  min-height: 0;
+  border: 1px solid #cfddf1;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+}
+
+.annota-uiw-editor-fullscreen.w-md-editor {
+  height: 100% !important;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: #ffffff !important;
+}
+
+.annota-uiw-editor-fullscreen .w-md-editor-toolbar {
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fbfdff;
+}
+
+.annota-uiw-editor-fullscreen .w-md-editor-text {
+  min-height: 280px;
+  max-height: none;
+  height: auto;
+  border-top: 0;
+  background: #ffffff !important;
+}
+
+.annota-uiw-editor-fullscreen .w-md-editor-text-pre,
+.annota-uiw-editor-fullscreen .w-md-editor-text-input,
+.annota-uiw-editor-fullscreen .w-md-editor-preview {
+  min-height: 280px !important;
+  max-height: none !important;
+  height: auto !important;
+  background: #ffffff !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+
+.annota-uiw-editor-fullscreen .w-md-editor-text-input {
+  padding: 16px 18px !important;
+  line-height: 1.65 !important;
+  font-size: 16px !important;
+  caret-color: #111827 !important;
+  background: #ffffff !important;
+}
+
+.annota-uiw-editor-fullscreen .w-md-editor-text-pre {
+  display: none !important;
+}
+
+.annota-uiw-editor-fullscreen .w-md-editor-content,
+.annota-uiw-editor-fullscreen .w-md-editor-area,
+.annota-uiw-editor-fullscreen .w-md-editor-preview,
+.annota-uiw-editor-fullscreen .w-md-editor-preview .wmde-markdown,
+.annota-uiw-editor-fullscreen .w-md-editor-preview .wmde-markdown-var,
+.annota-fullscreen-preview-pane.wmde-markdown-var,
+.annota-fullscreen-preview-pane .wmde-markdown,
+.annota-fullscreen-preview-pane .wmde-markdown-var {
+  background: #ffffff !important;
+  color: #111827 !important;
+}
+
+.annota-fullscreen-single {
+  height: 100%;
+  min-height: 0;
+}
+
+.annota-fullscreen-split {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+
+.annota-fullscreen-split-pane {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.annota-fullscreen-divider {
+  width: 10px;
+  cursor: col-resize;
+  position: relative;
+  background: transparent;
+}
+
+.annota-fullscreen-divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  background: #d6deeb;
+  border-radius: 999px;
+}
+
+.annota-fullscreen-divider:hover::before {
+  background: #93c5fd;
+}
+
+.annota-resizing,
+.annota-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.annota-fullscreen-preview-pane {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  background: #ffffff;
+}
+
+.annota-fullscreen-preview-prose {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 22px 26px;
+  color: #111827;
+}
+
+.annota-fullscreen-preview-prose .wmde-markdown,
+.annota-fullscreen-preview-prose .wmde-markdown-var {
+  background: #ffffff !important;
+  color: #111827 !important;
+  color-scheme: light !important;
+}
+
+.annota-fullscreen-preview-prose .wmde-markdown pre,
+.annota-fullscreen-preview-prose .annota-markdown pre {
+  background: #f1f5f9 !important;
+  color: #0f172a !important;
+  border: 1px solid #e2e8f0;
+}
+
+.annota-fullscreen-preview-prose img {
+  max-width: 100%;
+  height: auto;
+  cursor: zoom-in;
+  border-radius: 10px;
+}
+
+.annota-fullscreen-status {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 14px;
+}
+
+.annota-fullscreen-status [data-state="dirty"] {
+  color: #b45309;
+}
+
+.annota-fullscreen-status [data-state="saved"] {
+  color: #047857;
+}
+
+.annota-fullscreen-status[data-state="dirty"] span:last-child {
+  color: #b45309;
+}
+
+.annota-fullscreen-status[data-state="saving"] span:last-child {
+  color: #1d4ed8;
+}
+
+.annota-fullscreen-status[data-state="saved"] span:last-child {
+  color: #047857;
+}
+
+.annota-fullscreen-actions button {
+  all: unset;
+  display: inline-block;
+  border-radius: 9px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  border: 1px solid transparent;
+}
+
+.annota-fullscreen-actions button[data-kind="primary"] {
+  border-color: #1d4ed8;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.annota-fullscreen-actions button[data-kind="primary"]:hover {
+  background: #1d4ed8;
+}
+
+.annota-fullscreen-actions button[data-kind="primary"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #94a3b8;
+  border-color: #94a3b8;
+}
+
+.annota-fullscreen-actions button[data-kind="ghost"] {
+  border-color: #d1d5db;
+  background: #f8fafc;
+  color: #111827;
+}
+
+.annota-fullscreen-actions button[data-kind="ghost"]:hover {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.annota-fullscreen-help-wrap {
+  position: relative;
+}
+
+.annota-fullscreen-help-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 260px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #d7e2ef;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.5;
+  z-index: 2;
+}
+
+.annota-fullscreen-confirm-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: rgba(15, 23, 42, 0.36);
+  display: grid;
+  place-items: center;
+}
+
+.annota-fullscreen-confirm {
+  width: min(420px, calc(100vw - 32px));
+  border-radius: 12px;
+  border: 1px solid #d7e2ef;
+  background: #ffffff;
+  box-shadow: 0 20px 44px rgba(15, 23, 42, 0.24);
+  padding: 16px;
+}
+
+.annota-fullscreen-confirm-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.annota-fullscreen-confirm-desc {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.annota-fullscreen-confirm-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.annota-fullscreen-confirm-actions button {
+  all: unset;
+  border-radius: 9px;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.annota-fullscreen-confirm-actions button[data-kind="ghost"] {
+  color: #1f2937;
+  background: #f8fafc;
+}
+
+.annota-fullscreen-confirm-actions button[data-kind="danger"] {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.annota-fullscreen-lightbox {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  background: rgba(15, 23, 42, 0.85);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.annota-fullscreen-lightbox img {
+  max-width: min(1200px, 100%);
+  max-height: 90vh;
+  border-radius: 10px;
+  box-shadow: 0 24px 52px rgba(2, 6, 23, 0.4);
+}
+
+@media (max-width: 900px) {
+  .annota-fullscreen-overlay {
+    padding: 0;
+  }
+
+  .annota-fullscreen-dialog {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    border: 0;
+  }
+
+  .annota-fullscreen-topbar {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .annota-fullscreen-topbar-left,
+  .annota-fullscreen-topbar-right {
+    min-width: auto;
+  }
+
+  .annota-fullscreen-title {
+    font-size: 14px;
+  }
+
+  .annota-fullscreen-subtitle {
+    display: none;
+  }
+
+  .annota-fullscreen-mode-toggle button {
+    min-width: 62px;
+    padding: 0 6px;
+    font-size: 12px;
+    height: 30px;
+  }
+
+  .annota-fullscreen-main {
+    padding: 8px;
+  }
+
+  .annota-fullscreen-bottombar {
+    padding: 8px 10px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .annota-fullscreen-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .annota-fullscreen-topbar-right .annota-fullscreen-topbar-btn {
+    display: none;
+  }
+
+  .annota-fullscreen-help-panel {
+    right: -8px;
+    width: 220px;
+  }
 }
 
 .annota-edit-quote {
@@ -100,11 +967,6 @@
   font-weight: 600;
   border-left: 3px solid color-mix(in srgb, var(--annota-highlight-color, #ffe58f) 70%, #64748b);
   background: color-mix(in srgb, var(--annota-highlight-color, #ffe58f) 26%, #ffffff);
-}
-
-.annota-comment-input:focus {
-  outline: 2px solid #93c5fd;
-  border-color: #60a5fa;
 }
 
 .annota-action-row {

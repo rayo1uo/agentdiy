@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { sendRuntimeMessage } from "@/lib/runtime";
+import { markdownToHTML } from "@/lib/markdown";
 import type { Annotation } from "@/shared/annotation";
 import type {
   AnnotationListResponse,
@@ -8,11 +9,15 @@ import type {
   AnnotationURLSummaryResponse
 } from "@/shared/messages";
 import type { SyncConflictItem } from "@/shared/sync";
+import "@/shared/markdown.css";
+import "./styles.css";
 
 const SETTINGS_KEY_SYNC_ENABLED = "settings:syncEnabled";
 const SETTINGS_KEY_API_BASE = "settings:apiBaseUrl";
 const SETTINGS_KEY_TOOLBAR_OPACITY = "settings:toolbarOpacity";
 const SETTINGS_KEY_TOOLBAR_WIDTH = "settings:toolbarWidth";
+const SETTINGS_KEY_DIALOG_DEFAULT_ENABLED = "settings:dialogDefaultEnabled";
+const SETTINGS_KEY_DIALOG_LEGACY_ENABLED = "settings:dialogEnabledByAction";
 const AUTH_KEY_ACCESS_TOKEN = "auth:accessToken";
 const AUTH_KEY_REFRESH_TOKEN = "auth:refreshToken";
 const SYNC_KEY_QUEUE = "sync:queue";
@@ -58,6 +63,7 @@ function OptionsApp(): JSX.Element {
   const [apiBaseURL, setAPIBaseURL] = React.useState("http://localhost:8080");
   const [toolbarOpacity, setToolbarOpacity] = React.useState(0.92);
   const [toolbarWidth, setToolbarWidth] = React.useState(320);
+  const [dialogDefaultEnabled, setDialogDefaultEnabled] = React.useState(true);
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [authMessage, setAuthMessage] = React.useState("");
@@ -149,7 +155,9 @@ function OptionsApp(): JSX.Element {
           SETTINGS_KEY_SYNC_ENABLED,
           SETTINGS_KEY_API_BASE,
           SETTINGS_KEY_TOOLBAR_OPACITY,
-          SETTINGS_KEY_TOOLBAR_WIDTH
+          SETTINGS_KEY_TOOLBAR_WIDTH,
+          SETTINGS_KEY_DIALOG_DEFAULT_ENABLED,
+          SETTINGS_KEY_DIALOG_LEGACY_ENABLED
         ]),
         chrome.storage.local.get([AUTH_KEY_ACCESS_TOKEN, AUTH_KEY_REFRESH_TOKEN])
       ]);
@@ -166,6 +174,11 @@ function OptionsApp(): JSX.Element {
       }
       if (typeof syncData[SETTINGS_KEY_TOOLBAR_WIDTH] === "number") {
         setToolbarWidth(clamp(syncData[SETTINGS_KEY_TOOLBAR_WIDTH] as number, TOOLBAR_WIDTH_MIN, TOOLBAR_WIDTH_MAX));
+      }
+      if (typeof syncData[SETTINGS_KEY_DIALOG_DEFAULT_ENABLED] === "boolean") {
+        setDialogDefaultEnabled(syncData[SETTINGS_KEY_DIALOG_DEFAULT_ENABLED] as boolean);
+      } else if (typeof syncData[SETTINGS_KEY_DIALOG_LEGACY_ENABLED] === "boolean") {
+        setDialogDefaultEnabled(syncData[SETTINGS_KEY_DIALOG_LEGACY_ENABLED] as boolean);
       }
 
       if (typeof localData[AUTH_KEY_ACCESS_TOKEN] === "string") {
@@ -240,7 +253,8 @@ function OptionsApp(): JSX.Element {
           [SETTINGS_KEY_SYNC_ENABLED]: syncEnabled,
           [SETTINGS_KEY_API_BASE]: apiBaseURL.trim(),
           [SETTINGS_KEY_TOOLBAR_OPACITY]: clamp(toolbarOpacity, TOOLBAR_OPACITY_MIN, TOOLBAR_OPACITY_MAX),
-          [SETTINGS_KEY_TOOLBAR_WIDTH]: clamp(toolbarWidth, TOOLBAR_WIDTH_MIN, TOOLBAR_WIDTH_MAX)
+          [SETTINGS_KEY_TOOLBAR_WIDTH]: clamp(toolbarWidth, TOOLBAR_WIDTH_MIN, TOOLBAR_WIDTH_MAX),
+          [SETTINGS_KEY_DIALOG_DEFAULT_ENABLED]: dialogDefaultEnabled
         }),
         chrome.storage.local.set({
           [AUTH_KEY_ACCESS_TOKEN]: accessToken.trim(),
@@ -604,6 +618,15 @@ function OptionsApp(): JSX.Element {
                 onChange={(event) => setSyncEnabled(event.target.checked)}
               />
               启用多端同步
+            </label>
+
+            <label style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={dialogDefaultEnabled}
+                onChange={(event) => setDialogDefaultEnabled(event.target.checked)}
+              />
+              默认启用页面高亮与评论弹窗（可通过扩展图标为当前网页单独开/关）
             </label>
 
             <label style={{ display: "block", marginBottom: 10 }}>
@@ -1100,9 +1123,14 @@ function OptionsApp(): JSX.Element {
                         >
                           {annotation.quoteText}
                         </div>
-                        <div style={{ marginTop: 8, color: "#486581", fontSize: 13, lineHeight: 1.45 }}>
-                          {annotation.commentText || "(无评论)"}
-                        </div>
+                        {annotation.commentText?.trim() ? (
+                          <div
+                            className="opt-comment-markdown annota-markdown"
+                            dangerouslySetInnerHTML={{ __html: markdownToHTML(annotation.commentText) }}
+                          />
+                        ) : (
+                          <div style={{ marginTop: 8, color: "#486581", fontSize: 13, lineHeight: 1.45 }}>(无评论)</div>
+                        )}
                         <div style={{ marginTop: 8, color: "#829ab1", fontSize: 12 }}>
                           更新时间: {formatTimestamp(annotation.updatedAt)}
                         </div>

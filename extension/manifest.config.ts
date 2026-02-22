@@ -12,13 +12,18 @@ export default defineManifest({
     type: "module"
   },
   action: {
-    default_title: "Annota MVP",
-    default_popup: "src/popup/index.html"
+    default_title: "Annota MVP"
   },
   options_page: "src/options/index.html",
   side_panel: {
     default_path: "src/sidepanel/index.html"
   },
+  web_accessible_resources: [
+    {
+      resources: ["src/sidepanel/index.html", "assets/*"],
+      matches: ["<all_urls>"]
+    }
+  ],
   content_scripts: [
     {
       matches: ["<all_urls>"],

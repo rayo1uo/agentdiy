@@ -266,6 +266,41 @@
   line-height: 1.5;
 }
 
+.sp-comment-markdown .wmde-markdown {
+  background: transparent !important;
+  color: var(--sp-subtext) !important;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.sp-comment-markdown .wmde-markdown > :first-child {
+  margin-top: 0;
+}
+
+.sp-comment-markdown .wmde-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.sp-comment-markdown .wmde-markdown code {
+  background: #eef2f7;
+  border-radius: 4px;
+  padding: 0.08em 0.35em;
+}
+
+.sp-comment-markdown .wmde-markdown pre {
+  background: #0f172a;
+  border-radius: 8px;
+  padding: 0.55em 0.7em;
+}
+
+.sp-comment-markdown .wmde-markdown a {
+  color: #1d4ed8;
+}
+
+.sp-comment-empty {
+  color: var(--sp-subtext);
+}
+
 .sp-badge {
   font-size: 11px;
   font-weight: 700;

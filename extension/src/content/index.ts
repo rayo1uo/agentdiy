@@ -6,7 +6,8 @@ import {
 } from "@/shared/annotation";
 import type { AnnotationChangedEvent, AnnotationListResponse, RuntimeRequest } from "@/shared/messages";
 import { sendRuntimeMessage } from "@/lib/runtime";
-import { extractPosition, focusAnnotation, getQuoteContextByOffsets, renderAnnotations } from "./highlight";
+import { createMarkdownEditorWidget, type MarkdownEditorWidget } from "./markdown_editor";
+import { clearHighlights, extractPosition, focusAnnotation, getQuoteContextByOffsets, renderAnnotations } from "./highlight";
 import "./styles.css";
 
 const TOOLBAR_CLASS = "annota-toolbar";
@@ -18,6 +19,9 @@ const DOM_OBSERVER_WINDOW_MS = 15000;
 const DOM_RENDER_DEBOUNCE_MS = 180;
 const SETTINGS_KEY_TOOLBAR_OPACITY = "settings:toolbarOpacity";
 const SETTINGS_KEY_TOOLBAR_WIDTH = "settings:toolbarWidth";
+const SETTINGS_KEY_DIALOG_DEFAULT_ENABLED = "settings:dialogDefaultEnabled";
+const SETTINGS_KEY_DIALOG_SITE_MAP = "settings:dialogSiteEnabledMap";
+const SETTINGS_KEY_DIALOG_LEGACY_ENABLED = "settings:dialogEnabledByAction";
 const SETTINGS_KEY_API_BASE = "settings:apiBaseUrl";
 const AUTH_KEY_ACCESS_TOKEN = "auth:accessToken";
 const AUTH_KEY_REFRESH_TOKEN = "auth:refreshToken";
@@ -28,6 +32,13 @@ const TOOLBAR_WIDTH_MAX = 520;
 const STORAGE_REFRESH_DEBOUNCE_MS = 180;
 const TOOLBAR_REOPEN_SUPPRESS_MS = 220;
 const DRAFT_SELECTION_HIGHLIGHT_NAME = "annota-draft-selection";
+const DRAWER_ROOT_CLASS = "annota-drawer-root";
+const DRAWER_RAIL_CLASS = "annota-drawer-rail";
+const DRAWER_DOCK_CLASS = "annota-drawer-dock";
+const DRAWER_HANDLE_CLASS = "annota-drawer-item";
+const DRAWER_ICON_CLASS = "annota-drawer-item-icon";
+const DRAWER_PANEL_CLASS = "annota-drawer-panel";
+const DRAWER_IFRAME_CLASS = "annota-drawer-iframe";
 
 type SelectionDraft = {
   quoteText: string;
@@ -50,6 +61,7 @@ type ActiveEditColorPreview = {
 let toolbar: HTMLDivElement | null = null;
 let activeDraft: SelectionDraft | null = null;
 let activeEditColorPreview: ActiveEditColorPreview | null = null;
+let activeMarkdownEditor: MarkdownEditorWidget | null = null;
 let latestAnnotations: Annotation[] = [];
 let renderRetryTimers: number[] = [];
 let mutationObserver: MutationObserver | null = null;
@@ -58,6 +70,13 @@ let mutationRenderTimer: number | null = null;
 let storageRefreshTimer: number | null = null;
 let suppressToolbarOpenUntil = 0;
 let activeDraftSelectionRange: Range | null = null;
+let dialogDefaultEnabled = true;
+let dialogSiteEnabledMap: Record<string, boolean> = {};
+let dialogEnabled = true;
+let drawerRoot: HTMLDivElement | null = null;
+let drawerRail: HTMLDivElement | null = null;
+let drawerHandle: HTMLButtonElement | null = null;
+let drawerOpen = false;
 let toolbarPreferences: ToolbarPreferences = {
   opacity: 0.92,
   width: 320
@@ -67,6 +86,45 @@ const currentURL = (): string => window.location.href;
 const pageTitle = (): string => document.title;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+const isDialogEnabled = (): boolean => dialogEnabled;
+
+const parseDialogSiteScope = (value: string): string | null => {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+};
+
+const normalizeDialogSiteMap = (value: unknown): Record<string, boolean> => {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const source = value as Record<string, unknown>;
+  const next: Record<string, boolean> = {};
+  for (const [key, raw] of Object.entries(source)) {
+    if (key.trim() && typeof raw === "boolean") {
+      next[key] = raw;
+    }
+  }
+  return next;
+};
+
+const resolveDialogEnabledForURL = (url: string): boolean => {
+  const scope = parseDialogSiteScope(url);
+  if (scope && Object.prototype.hasOwnProperty.call(dialogSiteEnabledMap, scope)) {
+    return dialogSiteEnabledMap[scope];
+  }
+  return dialogDefaultEnabled;
+};
 
 const parseHexColor = (input: string): { r: number; g: number; b: number } | null => {
   const value = input.trim().toLowerCase();
@@ -200,6 +258,8 @@ const revertActiveEditColorPreview = (): void => {
 
 const hideToolbar = (options?: { revertEditColorPreview?: boolean }): void => {
   clearDraftSelectionPreview();
+  activeMarkdownEditor?.destroy();
+  activeMarkdownEditor = null;
   if (options?.revertEditColorPreview ?? true) {
     revertActiveEditColorPreview();
   } else {
@@ -224,9 +284,18 @@ const applyToolbarPreferences = (element: HTMLDivElement): void => {
 };
 
 const loadToolbarPreferences = async (): Promise<void> => {
-  const data = await chrome.storage.sync.get([SETTINGS_KEY_TOOLBAR_OPACITY, SETTINGS_KEY_TOOLBAR_WIDTH]);
+  const data = await chrome.storage.sync.get([
+    SETTINGS_KEY_TOOLBAR_OPACITY,
+    SETTINGS_KEY_TOOLBAR_WIDTH,
+    SETTINGS_KEY_DIALOG_DEFAULT_ENABLED,
+    SETTINGS_KEY_DIALOG_SITE_MAP,
+    SETTINGS_KEY_DIALOG_LEGACY_ENABLED
+  ]);
   const opacityValue = data[SETTINGS_KEY_TOOLBAR_OPACITY];
   const widthValue = data[SETTINGS_KEY_TOOLBAR_WIDTH];
+  const dialogDefaultEnabledValue = data[SETTINGS_KEY_DIALOG_DEFAULT_ENABLED];
+  const dialogLegacyEnabledValue = data[SETTINGS_KEY_DIALOG_LEGACY_ENABLED];
+  const dialogSiteMapValue = data[SETTINGS_KEY_DIALOG_SITE_MAP];
 
   if (typeof opacityValue === "number") {
     toolbarPreferences.opacity = clamp(opacityValue, TOOLBAR_OPACITY_MIN, TOOLBAR_OPACITY_MAX);
@@ -234,6 +303,14 @@ const loadToolbarPreferences = async (): Promise<void> => {
   if (typeof widthValue === "number") {
     toolbarPreferences.width = clamp(widthValue, TOOLBAR_WIDTH_MIN, TOOLBAR_WIDTH_MAX);
   }
+  dialogDefaultEnabled =
+    typeof dialogDefaultEnabledValue === "boolean"
+      ? dialogDefaultEnabledValue
+      : typeof dialogLegacyEnabledValue === "boolean"
+        ? dialogLegacyEnabledValue
+        : true;
+  dialogSiteEnabledMap = normalizeDialogSiteMap(dialogSiteMapValue);
+  dialogEnabled = resolveDialogEnabledForURL(currentURL());
 };
 
 const onToolbarPreferenceChanged = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string): void => {
@@ -249,6 +326,28 @@ const onToolbarPreferenceChanged = (changes: { [key: string]: chrome.storage.Sto
   const widthChange = changes[SETTINGS_KEY_TOOLBAR_WIDTH];
   if (widthChange && typeof widthChange.newValue === "number") {
     toolbarPreferences.width = clamp(widthChange.newValue, TOOLBAR_WIDTH_MIN, TOOLBAR_WIDTH_MAX);
+  }
+
+  const dialogDefaultEnabledChange = changes[SETTINGS_KEY_DIALOG_DEFAULT_ENABLED];
+  if (dialogDefaultEnabledChange) {
+    dialogDefaultEnabled =
+      typeof dialogDefaultEnabledChange.newValue === "boolean" ? dialogDefaultEnabledChange.newValue : true;
+  }
+
+  const dialogLegacyEnabledChange = changes[SETTINGS_KEY_DIALOG_LEGACY_ENABLED];
+  if (dialogLegacyEnabledChange && !dialogDefaultEnabledChange) {
+    if (typeof dialogLegacyEnabledChange.newValue === "boolean") {
+      dialogDefaultEnabled = dialogLegacyEnabledChange.newValue;
+    }
+  }
+
+  const dialogSiteMapChange = changes[SETTINGS_KEY_DIALOG_SITE_MAP];
+  if (dialogSiteMapChange) {
+    dialogSiteEnabledMap = normalizeDialogSiteMap(dialogSiteMapChange.newValue);
+  }
+
+  if (dialogDefaultEnabledChange || dialogLegacyEnabledChange || dialogSiteMapChange) {
+    applyDialogEnabledState(resolveDialogEnabledForURL(currentURL()));
   }
 
   if (toolbar) {
@@ -276,6 +375,13 @@ const clearRenderRetryTimers = (): void => {
     window.clearTimeout(timerID);
   }
   renderRetryTimers = [];
+};
+
+const clearRenderedAnnotations = (): void => {
+  latestAnnotations = [];
+  stopMutationObserver();
+  clearRenderRetryTimers();
+  clearHighlights();
 };
 
 const scheduleStorageDrivenRefresh = (): void => {
@@ -332,6 +438,13 @@ const renderLatestAnnotations = (): { renderedCount: number; totalCount: number 
   return { renderedCount: rendered.length, totalCount: latestAnnotations.length };
 };
 
+const setDrawerVisible = (visible: boolean): void => {
+  if (!drawerRoot) {
+    return;
+  }
+  drawerRoot.dataset.enabled = visible ? "true" : "false";
+};
+
 const startMutationObserver = (): void => {
   if (mutationObserver || !document.body || latestAnnotations.length === 0) {
     return;
@@ -377,6 +490,11 @@ const scheduleRenderRetries = (): void => {
 };
 
 const refreshAnnotations = async (): Promise<{ renderedCount: number; totalCount: number }> => {
+  if (!dialogEnabled) {
+    clearRenderedAnnotations();
+    return { renderedCount: 0, totalCount: 0 };
+  }
+
   const result = await sendRuntimeMessage<AnnotationListResponse>({
     type: "annotation.list",
     payload: { url: currentURL() }
@@ -415,6 +533,20 @@ const focusAnnotationWithRecovery = async (annotationID: string): Promise<void> 
       return;
     }
   }
+};
+
+const applyDialogEnabledState = (enabled: boolean): void => {
+  dialogEnabled = enabled;
+  setDrawerVisible(enabled);
+  if (!enabled) {
+    setDrawerOpen(false);
+    hideToolbar();
+    clearRenderedAnnotations();
+    return;
+  }
+  void refreshAnnotations().catch(() => {
+    // Ignore refresh errors when toggling dialog mode; next sync/change can recover.
+  });
 };
 
 const createAnnotation = async (
@@ -492,25 +624,158 @@ const computeToolbarPosition = (
 
   const minLeft = scrollX + VIEWPORT_MARGIN;
   const maxLeft = scrollX + window.innerWidth - width - VIEWPORT_MARGIN;
-  const centerLeft = scrollX + rect.left + rect.width / 2 - width / 2;
-  const left = Math.min(Math.max(centerLeft, minLeft), Math.max(minLeft, maxLeft));
-
   const minTop = scrollY + VIEWPORT_MARGIN;
   const maxTop = scrollY + window.innerHeight - height - VIEWPORT_MARGIN;
   const aboveTop = scrollY + rect.top - height - TOOLBAR_GAP;
   const belowTop = scrollY + rect.bottom + TOOLBAR_GAP;
+  const clampLeft = (value: number): number => Math.min(Math.max(value, minLeft), Math.max(minLeft, maxLeft));
+  const clampTop = (value: number): number => Math.min(Math.max(value, minTop), Math.max(minTop, maxTop));
 
-  let top = aboveTop;
-  if (aboveTop < minTop && belowTop <= maxTop) {
-    top = belowTop;
-  } else if (aboveTop < minTop && belowTop > maxTop) {
-    const spaceAbove = rect.top;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    top = spaceBelow >= spaceAbove ? belowTop : aboveTop;
+  const anchorRect = {
+    left: scrollX + rect.left,
+    top: scrollY + rect.top,
+    right: scrollX + rect.right,
+    bottom: scrollY + rect.bottom
+  };
+  const anchorAvoidRect = {
+    left: anchorRect.left - TOOLBAR_GAP,
+    top: anchorRect.top - TOOLBAR_GAP,
+    right: anchorRect.right + TOOLBAR_GAP,
+    bottom: anchorRect.bottom + TOOLBAR_GAP
+  };
+
+  const intersects = (top: number, left: number): boolean => {
+    const right = left + width;
+    const bottom = top + height;
+    if (right <= anchorAvoidRect.left) {
+      return false;
+    }
+    if (left >= anchorAvoidRect.right) {
+      return false;
+    }
+    if (bottom <= anchorAvoidRect.top) {
+      return false;
+    }
+    if (top >= anchorAvoidRect.bottom) {
+      return false;
+    }
+    return true;
+  };
+
+  const overlapArea = (top: number, left: number): number => {
+    const overlapLeft = Math.max(left, anchorAvoidRect.left);
+    const overlapTop = Math.max(top, anchorAvoidRect.top);
+    const overlapRight = Math.min(left + width, anchorAvoidRect.right);
+    const overlapBottom = Math.min(top + height, anchorAvoidRect.bottom);
+    if (overlapRight <= overlapLeft || overlapBottom <= overlapTop) {
+      return 0;
+    }
+    return (overlapRight - overlapLeft) * (overlapBottom - overlapTop);
+  };
+
+  const centerLeft = scrollX + rect.left + rect.width / 2 - width / 2;
+  const alignLeft = scrollX + rect.left;
+  const alignRight = scrollX + rect.right - width;
+  const leftCandidates = [centerLeft, alignLeft, alignRight].map(clampLeft);
+
+  const spaceAbove = rect.top - VIEWPORT_MARGIN;
+  const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN;
+  const verticalCandidates = spaceBelow >= spaceAbove ? [belowTop, aboveTop] : [aboveTop, belowTop];
+
+  const candidates: Array<{ top: number; left: number }> = [];
+  for (const topCandidate of verticalCandidates) {
+    const top = clampTop(topCandidate);
+    for (const leftCandidate of leftCandidates) {
+      const key = `${Math.round(top)}:${Math.round(leftCandidate)}`;
+      if (!candidates.some((item) => `${Math.round(item.top)}:${Math.round(item.left)}` === key)) {
+        candidates.push({ top, left: leftCandidate });
+      }
+    }
   }
-  top = Math.min(Math.max(top, minTop), Math.max(minTop, maxTop));
 
-  return { top, left };
+  for (const candidate of candidates) {
+    if (!intersects(candidate.top, candidate.left)) {
+      return candidate;
+    }
+  }
+
+  let bestCandidate = candidates[0] ?? { top: clampTop(belowTop), left: clampLeft(centerLeft) };
+  let bestOverlap = overlapArea(bestCandidate.top, bestCandidate.left);
+  for (const candidate of candidates.slice(1)) {
+    const area = overlapArea(candidate.top, candidate.left);
+    if (area < bestOverlap) {
+      bestCandidate = candidate;
+      bestOverlap = area;
+    }
+  }
+  return bestCandidate;
+};
+
+const setDrawerOpen = (next: boolean): void => {
+  drawerOpen = next;
+  if (!drawerRail || !drawerHandle) {
+    return;
+  }
+  drawerRail.dataset.open = next ? "true" : "false";
+  drawerHandle.dataset.active = next ? "true" : "false";
+  drawerHandle.setAttribute("aria-pressed", next ? "true" : "false");
+};
+
+const ensureDrawerUI = (): void => {
+  if (drawerRoot) {
+    return;
+  }
+  if (!document.body) {
+    return;
+  }
+
+  const root = document.createElement("div");
+  root.className = DRAWER_ROOT_CLASS;
+  root.dataset.enabled = dialogEnabled ? "true" : "false";
+
+  const rail = document.createElement("div");
+  rail.className = DRAWER_RAIL_CLASS;
+
+  const dock = document.createElement("div");
+  dock.className = DRAWER_DOCK_CLASS;
+
+  const handle = document.createElement("button");
+  handle.type = "button";
+  handle.className = DRAWER_HANDLE_CLASS;
+  handle.setAttribute("aria-label", "打开或关闭 Annota 侧边栏");
+  handle.title = "Annota";
+  handle.setAttribute("aria-pressed", "false");
+
+  const icon = document.createElement("span");
+  icon.className = DRAWER_ICON_CLASS;
+  icon.textContent = "A";
+  icon.setAttribute("aria-hidden", "true");
+  handle.appendChild(icon);
+
+  const panel = document.createElement("div");
+  panel.className = DRAWER_PANEL_CLASS;
+
+  const iframe = document.createElement("iframe");
+  iframe.className = DRAWER_IFRAME_CLASS;
+  iframe.src = chrome.runtime.getURL("src/sidepanel/index.html");
+  iframe.loading = "lazy";
+  iframe.title = "Annota 抽拉面板";
+
+  panel.appendChild(iframe);
+  dock.appendChild(handle);
+  rail.append(dock, panel);
+  root.appendChild(rail);
+  document.body.appendChild(root);
+
+  handle.addEventListener("click", (event) => {
+    event.preventDefault();
+    setDrawerOpen(!drawerOpen);
+  });
+
+  drawerRoot = root;
+  drawerRail = rail;
+  drawerHandle = handle;
+  setDrawerOpen(false);
 };
 
 const buildColorRow = (selectedColor: string, onSelect?: (value: string) => void): HTMLDivElement => {
@@ -549,6 +814,10 @@ const buildColorRow = (selectedColor: string, onSelect?: (value: string) => void
 };
 
 const showCreateToolbar = (range: Range): void => {
+  if (!isDialogEnabled()) {
+    hideToolbar();
+    return;
+  }
   hideToolbar();
 
   const rect = range.getBoundingClientRect();
@@ -590,13 +859,11 @@ const showCreateToolbar = (range: Range): void => {
   });
   applyDraftSelectionPreview(range, selectedColor);
 
-  const commentInput = document.createElement("textarea");
-  commentInput.className = "annota-comment-input";
-  commentInput.placeholder = "可选：输入评论";
-  commentInput.rows = 3;
-  commentInput.addEventListener("mousedown", (event) => {
-    event.stopPropagation();
+  const commentEditor = createMarkdownEditorWidget({
+    placeholder: "可选：输入评论（支持 Markdown）",
+    rows: 4
   });
+  activeMarkdownEditor = commentEditor;
 
   const errorText = document.createElement("div");
   errorText.className = "annota-toolbar-error";
@@ -610,11 +877,12 @@ const showCreateToolbar = (range: Range): void => {
   const actionRow = document.createElement("div");
   actionRow.className = "annota-action-row";
 
-  const cancelButton = buildActionButton("取消", "ghost", async () => {
+  const handleCancel = async (): Promise<void> => {
     closeToolbarByUserIntent();
-  });
+  };
+  const cancelButton = buildActionButton("取消", "ghost", handleCancel);
 
-  const highlightOnlyButton = buildActionButton("仅高亮", "ghost", async () => {
+  const handleHighlightOnly = async (): Promise<boolean> => {
     setError("");
     highlightOnlyButton.disabled = true;
     saveCommentButton.disabled = true;
@@ -622,21 +890,26 @@ const showCreateToolbar = (range: Range): void => {
     highlightOnlyButton.textContent = "保存中...";
     try {
       await createAnnotation(activeDraft, { color: selectedColor, commentText: "" });
+      return true;
     } catch (error) {
       setError(error instanceof Error ? error.message : "保存高亮失败");
+      return false;
     } finally {
       highlightOnlyButton.disabled = false;
       saveCommentButton.disabled = false;
       highlightOnlyButton.textContent = previousText;
     }
+  };
+  const highlightOnlyButton = buildActionButton("仅高亮", "ghost", async () => {
+    await handleHighlightOnly();
   });
 
-  const saveCommentButton = buildActionButton("保存评论", "primary", async () => {
-    const comment = commentInput.value.trim();
+  const handleSaveComment = async (): Promise<boolean> => {
+    const comment = commentEditor.getValue().trim();
     if (!comment) {
       setError("评论不能为空");
-      commentInput.focus();
-      return;
+      commentEditor.focus();
+      return false;
     }
 
     setError("");
@@ -646,38 +919,44 @@ const showCreateToolbar = (range: Range): void => {
     saveCommentButton.textContent = "保存中...";
     try {
       await createAnnotation(activeDraft, { color: selectedColor, commentText: comment });
+      return true;
     } catch (error) {
       setError(error instanceof Error ? error.message : "保存评论失败");
+      return false;
     } finally {
       highlightOnlyButton.disabled = false;
       saveCommentButton.disabled = false;
       saveCommentButton.textContent = previousText;
     }
+  };
+  const saveCommentButton = buildActionButton("保存评论", "primary", async () => {
+    await handleSaveComment();
   });
 
-  commentInput.addEventListener("input", () => {
+  commentEditor.onInput((value) => {
     if (errorText.hidden) {
       return;
     }
-    if (commentInput.value.trim()) {
+    if (value.trim()) {
       setError("");
     }
   });
 
-  commentInput.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeToolbarByUserIntent();
-      return;
-    }
+  commentEditor.onKeyDown((event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       void saveCommentButton.click();
     }
   });
+  commentEditor.setOnCancelRequest(() => {
+    void handleCancel();
+  });
+  commentEditor.setOnSaveRequest(() => {
+    void handleSaveComment();
+  });
 
   actionRow.append(cancelButton, highlightOnlyButton, saveCommentButton);
-  nextToolbar.append(heading, colorRow, commentInput, errorText, actionRow);
+  nextToolbar.append(heading, colorRow, commentEditor.container, errorText, actionRow);
   document.body.appendChild(nextToolbar);
 
   const { top, left } = computeToolbarPosition(rect, nextToolbar);
@@ -738,11 +1017,12 @@ const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
     quotePreview.style.setProperty("--annota-highlight-color", color);
   });
 
-  const commentInput = document.createElement("textarea");
-  commentInput.className = "annota-comment-input";
-  commentInput.placeholder = "请输入评论（可为空）";
-  commentInput.value = annotation.commentText ?? "";
-  commentInput.rows = 4;
+  const commentEditor = createMarkdownEditorWidget({
+    placeholder: "请输入评论（支持 Markdown，可为空）",
+    rows: 5,
+    initialValue: annotation.commentText ?? ""
+  });
+  activeMarkdownEditor = commentEditor;
 
   const errorText = document.createElement("div");
   errorText.className = "annota-toolbar-error";
@@ -757,49 +1037,57 @@ const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
   const actionRow = document.createElement("div");
   actionRow.className = "annota-action-row";
 
-  const cancelButton = buildActionButton("取消", "ghost", async () => {
+  const handleCancel = async (): Promise<void> => {
     if (saving) {
       return;
     }
     closeToolbarByUserIntent();
-  });
+  };
+  const cancelButton = buildActionButton("取消", "ghost", handleCancel);
 
-  const saveButton = buildActionButton("保存评论", "primary", async () => {
+  const handleSaveComment = async (): Promise<boolean> => {
     if (saving) {
-      return;
+      return false;
     }
     saving = true;
     setError("");
     cancelButton.disabled = true;
     saveButton.disabled = true;
     const previous = saveButton.textContent;
-    saveButton.textContent = "保存中...";
+      saveButton.textContent = "保存中...";
     try {
-      await updateAnnotationComment(annotation.id, commentInput.value, selectedColor);
+      await updateAnnotationComment(annotation.id, commentEditor.getValue(), selectedColor);
+      commentEditor.markSaved();
+      return true;
     } catch (error) {
       setError(error instanceof Error ? error.message : "保存评论失败");
+      return false;
     } finally {
       saving = false;
       cancelButton.disabled = false;
       saveButton.disabled = false;
       saveButton.textContent = previous;
     }
+  };
+  const saveButton = buildActionButton("保存评论", "primary", async () => {
+    await handleSaveComment();
   });
 
-  commentInput.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeToolbarByUserIntent();
-      return;
-    }
+  commentEditor.onKeyDown((event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       void saveButton.click();
     }
   });
+  commentEditor.setOnCancelRequest(() => {
+    void handleCancel();
+  });
+  commentEditor.setOnSaveRequest(() => {
+    void handleSaveComment();
+  });
 
   actionRow.append(cancelButton, saveButton);
-  nextToolbar.append(heading, subtitle, colorRow, quotePreview, commentInput, errorText, actionRow);
+  nextToolbar.append(heading, subtitle, colorRow, quotePreview, commentEditor.container, errorText, actionRow);
   document.body.appendChild(nextToolbar);
 
   const { top, left } = computeToolbarPosition(anchorRect, nextToolbar);
@@ -808,13 +1096,15 @@ const showEditToolbar = (annotation: Annotation, anchorRect: DOMRect): void => {
 
   toolbar = nextToolbar;
   window.setTimeout(() => {
-    commentInput.focus();
-    const length = commentInput.value.length;
-    commentInput.setSelectionRange(length, length);
+    commentEditor.focus();
   }, 0);
 };
 
 const openEditCommentForAnnotation = async (annotationID: string): Promise<void> => {
+  if (!isDialogEnabled()) {
+    hideToolbar();
+    return;
+  }
   if (latestAnnotations.length === 0) {
     try {
       await refreshAnnotations();
@@ -859,7 +1149,17 @@ const openEditCommentForAnnotation = async (annotationID: string): Promise<void>
 
 const selectionHandler = (event: MouseEvent): void => {
   const target = event.target as HTMLElement | null;
+  if (target?.closest(".annota-fullscreen-overlay")) {
+    return;
+  }
   if (toolbar && target && target.closest(`.${TOOLBAR_CLASS}`)) {
+    return;
+  }
+
+  if (!isDialogEnabled()) {
+    if (toolbar) {
+      hideToolbar();
+    }
     return;
   }
 
@@ -870,10 +1170,7 @@ const selectionHandler = (event: MouseEvent): void => {
       void openEditCommentForAnnotation(annotationID);
       return;
     }
-    if (Date.now() < suppressToolbarOpenUntil) {
-      return;
-    }
-    hideToolbar();
+    // Keep toolbar open on page clicks when there is no new selection.
     return;
   }
 
@@ -908,34 +1205,23 @@ const onRuntimeMessage = (message: RuntimeRequest | AnnotationChangedEvent): voi
     if (message.payload.url && message.payload.url !== currentURL()) {
       return;
     }
+    if (!isDialogEnabled()) {
+      return;
+    }
     void openEditCommentForAnnotation(message.payload.id);
   }
 };
 
 const bootstrap = async (): Promise<void> => {
   document.addEventListener("mouseup", selectionHandler);
-  document.addEventListener("scroll", () => hideToolbar(), true);
-  document.addEventListener("mousedown", (event) => {
-    if (!toolbar) {
-      return;
-    }
-    const target = event.target as HTMLElement | null;
-    if (!target || !target.closest(`.${TOOLBAR_CLASS}`)) {
-      closeToolbarByUserIntent();
-    }
-  });
   chrome.runtime.onMessage.addListener((message) => {
     onRuntimeMessage(message as RuntimeRequest | AnnotationChangedEvent);
   });
   chrome.storage.onChanged.addListener(onExtensionStorageChanged);
 
   await loadToolbarPreferences();
-
-  try {
-    await refreshAnnotations();
-  } catch {
-    // Ignore initial load errors in content script; page can still function and retry later.
-  }
+  ensureDrawerUI();
+  applyDialogEnabledState(dialogEnabled);
 };
 
 void bootstrap();

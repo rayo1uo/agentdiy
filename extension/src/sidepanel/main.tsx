@@ -1,9 +1,12 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import MDEditor from "@uiw/react-md-editor";
+import rehypeSanitize from "rehype-sanitize";
 import type { Annotation } from "@/shared/annotation";
 import type { AnnotationChangedEvent, AnnotationListResponse } from "@/shared/messages";
 import type { SyncConflictItem } from "@/shared/sync";
 import { sendRuntimeMessage } from "@/lib/runtime";
+import "@uiw/react-markdown-preview/markdown.css";
 import "./styles.css";
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
@@ -643,7 +646,13 @@ function SidePanelApp(): JSX.Element {
               {!isConflict && isPending ? <span className="sp-badge sp-badge-pending">待同步</span> : null}
               {!isConflict && !isPending ? <span className="sp-badge sp-badge-success">已同步</span> : null}
             </div>
-            <p className="sp-comment">{annotation.commentText || "(无评论)"}</p>
+            {annotation.commentText?.trim() ? (
+              <div className="sp-comment sp-comment-markdown" data-color-mode="light">
+                <MDEditor.Markdown source={annotation.commentText} rehypePlugins={[rehypeSanitize]} />
+              </div>
+            ) : (
+              <p className="sp-comment sp-comment-empty">(无评论)</p>
+            )}
             <div className="sp-actions">
               <button className="sp-btn" onClick={() => void onFocus(annotation.id)}>
                 定位
