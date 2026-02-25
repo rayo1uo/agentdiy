@@ -1232,7 +1232,9 @@ const selectionHandler = (event: MouseEvent): void => {
       void openEditCommentForAnnotation(annotationID);
       return;
     }
-    // Keep toolbar open on page clicks when there is no new selection.
+    if (toolbar) {
+      closeToolbarByUserIntent({ clearSelection: false });
+    }
     return;
   }
 

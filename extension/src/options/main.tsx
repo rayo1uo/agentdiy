@@ -1,7 +1,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import MarkdownPreview from "@uiw/react-markdown-preview";
+import rehypeSanitize from "rehype-sanitize";
 import { sendRuntimeMessage } from "@/lib/runtime";
-import { markdownToHTML } from "@/lib/markdown";
 import type { Annotation } from "@/shared/annotation";
 import type {
   AnnotationListResponse,
@@ -9,6 +10,7 @@ import type {
   AnnotationURLSummaryResponse
 } from "@/shared/messages";
 import type { SyncConflictItem } from "@/shared/sync";
+import "@uiw/react-markdown-preview/markdown.css";
 import "@/shared/markdown.css";
 import "./styles.css";
 
@@ -1124,10 +1126,13 @@ function OptionsApp(): JSX.Element {
                           {annotation.quoteText}
                         </div>
                         {annotation.commentText?.trim() ? (
-                          <div
-                            className="opt-comment-markdown annota-markdown"
-                            dangerouslySetInnerHTML={{ __html: markdownToHTML(annotation.commentText) }}
-                          />
+                          <div data-color-mode="light">
+                            <MarkdownPreview
+                              source={annotation.commentText}
+                              className="opt-comment-markdown annota-markdown"
+                              rehypePlugins={[rehypeSanitize]}
+                            />
+                          </div>
                         ) : (
                           <div style={{ marginTop: 8, color: "#486581", fontSize: 13, lineHeight: 1.45 }}>(无评论)</div>
                         )}

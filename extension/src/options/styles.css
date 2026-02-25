@@ -3,4 +3,28 @@
   color: #486581;
   font-size: 13px;
   line-height: 1.45;
+  background: transparent !important;
+}
+
+.opt-comment-markdown.wmde-markdown,
+.opt-comment-markdown.wmde-markdown-var {
+  --color-canvas-default: transparent;
+  --color-fg-default: #486581;
+  --color-neutral-muted: #dbe5f0;
+  --color-border-default: #dbe5f0;
+  margin-top: 8px;
+  padding: 0;
+  background: transparent !important;
+}
+
+.opt-comment-markdown.wmde-markdown > :first-child {
+  margin-top: 0;
+}
+
+.opt-comment-markdown.wmde-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.opt-comment-markdown.wmde-markdown pre {
+  border-radius: 8px;
 }
