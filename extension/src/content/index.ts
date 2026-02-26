@@ -90,7 +90,27 @@ let toolbarPreferences: ToolbarPreferences = {
   width: 320
 };
 
-const currentURL = (): string => window.location.href;
+const normalizeAnnotationURL = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return trimmed;
+    }
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    const hashIndex = trimmed.indexOf("#");
+    return hashIndex >= 0 ? trimmed.slice(0, hashIndex) : trimmed;
+  }
+};
+
+const currentURL = (): string => normalizeAnnotationURL(window.location.href);
+const isSameAnnotationURL = (left: string, right: string): boolean =>
+  normalizeAnnotationURL(left) === normalizeAnnotationURL(right);
 const pageTitle = (): string => document.title;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
@@ -427,8 +447,17 @@ const onExtensionStorageChanged = (
   }
 
   const authChanged = Boolean(changes[AUTH_KEY_ACCESS_TOKEN] || changes[AUTH_KEY_REFRESH_TOKEN]);
-  const currentAnnotationKey = `annotations:${currentURL()}`;
-  const currentURLAnnotationsChanged = Object.prototype.hasOwnProperty.call(changes, currentAnnotationKey);
+  const current = currentURL();
+  const currentURLAnnotationsChanged = Object.keys(changes).some((key) => {
+    if (!key.startsWith("annotations:")) {
+      return false;
+    }
+    const changedURL = normalizeAnnotationURL(key.slice("annotations:".length).trim());
+    if (!changedURL) {
+      return false;
+    }
+    return isSameAnnotationURL(changedURL, current);
+  });
 
   if (authChanged || currentURLAnnotationsChanged) {
     scheduleStorageDrivenRefresh();
@@ -1245,12 +1274,12 @@ const selectionHandler = (event: MouseEvent): void => {
 };
 
 const onRuntimeMessage = (message: RuntimeRequest | AnnotationChangedEvent): void => {
-  if (message.type === "annotation.changed" && message.payload.url === currentURL()) {
+  if (message.type === "annotation.changed" && isSameAnnotationURL(message.payload.url, currentURL())) {
     void refreshAnnotations();
     return;
   }
 
-  if (message.type === "annotation.refresh" && message.payload.url === currentURL()) {
+  if (message.type === "annotation.refresh" && isSameAnnotationURL(message.payload.url, currentURL())) {
     void refreshAnnotations();
     return;
   }
@@ -1266,7 +1295,7 @@ const onRuntimeMessage = (message: RuntimeRequest | AnnotationChangedEvent): voi
   }
 
   if (message.type === "annotation.editComment") {
-    if (message.payload.url && message.payload.url !== currentURL()) {
+    if (message.payload.url && !isSameAnnotationURL(message.payload.url, currentURL())) {
       return;
     }
     if (!isDialogEnabled()) {

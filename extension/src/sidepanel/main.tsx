@@ -29,12 +29,14 @@ const canonicalURL = (value: string): string => {
     return stripHash(value);
   }
 };
+const isSameAnnotationURL = (left: string, right: string): boolean => canonicalURL(left) === canonicalURL(right);
 
 const getActiveTabContext = async (): Promise<{ tabId: number | null; url: string }> => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const normalizedURL = canonicalURL(tab?.url ?? "");
   return {
     tabId: tab?.id ?? null,
-    url: tab?.url ?? ""
+    url: normalizedURL
   };
 };
 
@@ -88,7 +90,7 @@ function SidePanelApp(): JSX.Element {
 
   const reloadConflictDetails = React.useCallback(
     async (targetURL?: string) => {
-      const nextURL = targetURL ?? url;
+      const nextURL = canonicalURL(targetURL ?? url);
       if (!nextURL) {
         setPageConflicts([]);
         return;
@@ -99,7 +101,7 @@ function SidePanelApp(): JSX.Element {
           type: "sync.conflicts.list",
           payload: {}
         });
-        setPageConflicts(result.conflicts.filter((item) => item.operation.url === nextURL));
+        setPageConflicts(result.conflicts.filter((item) => isSameAnnotationURL(item.operation.url, nextURL)));
       } catch {
         // Ignore conflict list load errors in panel.
       }
@@ -109,7 +111,7 @@ function SidePanelApp(): JSX.Element {
 
   const reloadSyncState = React.useCallback(
     async (targetURL?: string) => {
-      const nextURL = targetURL ?? url;
+      const nextURL = canonicalURL(targetURL ?? url);
       if (!nextURL) {
         setSyncState(DEFAULT_SYNC_STATE);
         return;
@@ -132,7 +134,7 @@ function SidePanelApp(): JSX.Element {
 
   const reload = React.useCallback(
     async (targetURL?: string) => {
-      const nextURL = targetURL ?? url;
+      const nextURL = canonicalURL(targetURL ?? url);
       if (!nextURL) {
         setAnnotations([]);
         setLoading(false);
@@ -182,7 +184,7 @@ function SidePanelApp(): JSX.Element {
       if (typeof changeInfo.url === "string") {
         // Ignore hash-only URL updates and any update that doesn't change
         // the effective page URL for annotations.
-        if (canonicalURL(changeInfo.url) === canonicalURL(url)) {
+        if (isSameAnnotationURL(changeInfo.url, url)) {
           return;
         }
         void refreshActiveTab();
@@ -209,7 +211,7 @@ function SidePanelApp(): JSX.Element {
 
   React.useEffect(() => {
     const listener = (message: AnnotationChangedEvent): void => {
-      if (message.type === "annotation.changed" && message.payload.url === url) {
+      if (message.type === "annotation.changed" && isSameAnnotationURL(message.payload.url, url)) {
         void reload(url);
       }
     };
@@ -232,24 +234,39 @@ function SidePanelApp(): JSX.Element {
 
   const sendMessageToActiveTab = React.useCallback(
     async (message: TabRuntimeRequest): Promise<boolean> => {
-      if (tabID === null) {
-        setError("当前标签页不可用");
-        return false;
+      const trySend = async (targetTabID: number | null): Promise<Error | null> => {
+        if (targetTabID === null) {
+          return new Error("当前标签页不可用");
+        }
+        try {
+          await chrome.tabs.sendMessage(targetTabID, message);
+          return null;
+        } catch (error) {
+          return error instanceof Error ? error : new Error("当前页面暂不支持该操作，请刷新网页后重试");
+        }
+      };
+
+      const firstError = await trySend(tabID);
+      if (!firstError) {
+        return true;
       }
 
-      try {
-        await chrome.tabs.sendMessage(tabID, message);
-        return true;
-      } catch (sendError) {
-        const messageText =
-          sendError instanceof Error && sendError.message
-            ? sendError.message
-            : "当前页面暂不支持该操作，请刷新网页后重试";
-        setError(messageText);
-        return false;
+      const latestTab = await getActiveTabContext();
+      if (latestTab.tabId !== tabID) {
+        setTabID(latestTab.tabId);
       }
+      if (latestTab.url && !isSameAnnotationURL(latestTab.url, url)) {
+        setURL(latestTab.url);
+      }
+
+      const secondError = await trySend(latestTab.tabId);
+      if (!secondError) {
+        return true;
+      }
+      setError(secondError.message || firstError.message);
+      return false;
     },
-    [tabID]
+    [tabID, url]
   );
 
   const onFocus = async (id: string): Promise<void> => {
@@ -264,7 +281,7 @@ function SidePanelApp(): JSX.Element {
     setError("");
     await sendMessageToActiveTab({
       type: "annotation.editComment",
-      payload: { id: annotation.id, url }
+      payload: { id: annotation.id, url: annotation.url }
     });
   };
 
@@ -273,12 +290,12 @@ function SidePanelApp(): JSX.Element {
     try {
       await sendRuntimeMessage({
         type: "annotation.delete",
-        payload: { url, id: annotation.id }
+        payload: { url: annotation.url, id: annotation.id }
       });
       await reload();
       await sendMessageToActiveTab({
         type: "annotation.refresh",
-        payload: { url }
+        payload: { url: annotation.url }
       });
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "删除失败");

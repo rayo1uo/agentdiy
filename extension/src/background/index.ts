@@ -74,6 +74,7 @@ type ServerAnnotation = {
 };
 
 let syncInFlight: Promise<void> | null = null;
+let annotationURLMigrationInFlight: Promise<void> | null = null;
 
 const nowISO = (): string => new Date().toISOString();
 const nowMS = (): number => Date.now();
@@ -87,6 +88,24 @@ const makeOperationID = (): string => {
 const normalizeBaseURL = (value: string): string => value.trim().replace(/\/+$/, "");
 const DEFAULT_DIALOG_ENABLED = true;
 type DialogSiteMap = Record<string, boolean>;
+
+const normalizeAnnotationURL = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return trimmed;
+    }
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    const hashIndex = trimmed.indexOf("#");
+    return hashIndex >= 0 ? trimmed.slice(0, hashIndex) : trimmed;
+  }
+};
 
 const parseSiteScope = (value: string): string | null => {
   if (!value) {
@@ -154,6 +173,17 @@ const saveAnnotations = async (url: string, annotations: Annotation[]): Promise<
   await chrome.storage.local.set({ [key]: annotations });
 };
 
+const mergeAnnotationsByID = (items: Annotation[]): Annotation[] => {
+  const merged = new Map<string, Annotation>();
+  for (const item of items) {
+    const existing = merged.get(item.id);
+    if (!existing || shouldReplaceAnnotation(existing, item)) {
+      merged.set(item.id, item);
+    }
+  }
+  return sortAnnotationsByUpdatedAt(Array.from(merged.values()));
+};
+
 const parseTimestamp = (value: string): number => {
   const time = Date.parse(value);
   return Number.isFinite(time) ? time : 0;
@@ -169,16 +199,34 @@ const shouldReplaceAnnotation = (current: Annotation, incoming: Annotation): boo
 
   const incomingUpdatedAt = parseTimestamp(incoming.updatedAt || incoming.createdAt);
   const currentUpdatedAt = parseTimestamp(current.updatedAt || current.createdAt);
-  if (incomingUpdatedAt <= currentUpdatedAt) {
+  if (incomingUpdatedAt > currentUpdatedAt) {
+    return true;
+  }
+  if (incomingUpdatedAt < currentUpdatedAt) {
     return false;
   }
 
-  // Same version but different visible content likely indicates stale or out-of-order payload.
-  if (incoming.commentText !== current.commentText || incoming.color !== current.color) {
+  const incomingCreatedAt = parseTimestamp(incoming.createdAt);
+  const currentCreatedAt = parseTimestamp(current.createdAt);
+  if (incomingCreatedAt > currentCreatedAt) {
+    return true;
+  }
+  if (incomingCreatedAt < currentCreatedAt) {
     return false;
   }
 
-  return true;
+  return (
+    incoming.url !== current.url ||
+    incoming.title !== current.title ||
+    incoming.quoteText !== current.quoteText ||
+    incoming.prefixText !== current.prefixText ||
+    incoming.suffixText !== current.suffixText ||
+    incoming.startOffset !== current.startOffset ||
+    incoming.endOffset !== current.endOffset ||
+    incoming.color !== current.color ||
+    incoming.commentText !== current.commentText ||
+    incoming.status !== current.status
+  );
 };
 
 const sortAnnotationsByUpdatedAt = (items: Annotation[]): Annotation[] =>
@@ -243,7 +291,8 @@ const emitChanged = async (url: string): Promise<void> => {
 
 const normalizeQueueItem = (item: Partial<SyncQueueItem>): SyncQueueItem | null => {
   const opId = (item.opId ?? "").trim();
-  const url = (item.url ?? "").trim();
+  const url = normalizeAnnotationURL((item.url ?? "").trim());
+  const annotationId = (item.annotationId ?? "").trim();
   const opType = item.opType;
   if (!opId || !url || !opType) {
     return null;
@@ -254,7 +303,7 @@ const normalizeQueueItem = (item: Partial<SyncQueueItem>): SyncQueueItem | null 
     opType,
     url,
     title: item.title,
-    annotationId: item.annotationId,
+    annotationId: annotationId || undefined,
     quoteText: item.quoteText,
     prefixText: item.prefixText,
     suffixText: item.suffixText,
@@ -283,7 +332,14 @@ const saveSyncQueue = async (queue: SyncQueueItem[]): Promise<void> => {
 
 const getSyncConflicts = async (): Promise<SyncConflictItem[]> => {
   const result = await chrome.storage.local.get(STORAGE_KEY.conflicts);
-  return (result[STORAGE_KEY.conflicts] ?? []) as SyncConflictItem[];
+  const conflicts = (result[STORAGE_KEY.conflicts] ?? []) as SyncConflictItem[];
+  return conflicts.map((item) => ({
+    ...item,
+    operation: {
+      ...item.operation,
+      url: normalizeAnnotationURL(item.operation.url)
+    }
+  }));
 };
 
 const saveSyncConflicts = async (items: SyncConflictItem[]): Promise<void> => {
@@ -336,25 +392,103 @@ const listLocalAnnotationURLs = async (): Promise<string[]> => {
   return urls;
 };
 
-const listPendingAnnotationIDsByURL = async (): Promise<Map<string, Set<string>>> => {
-  const [queue, conflicts] = await Promise.all([getSyncQueue(), getSyncConflicts()]);
-  const byURL = new Map<string, Set<string>>();
+const migrateAnnotationStorageURLKeys = async (): Promise<void> => {
+  const storageData = await chrome.storage.local.get(null);
+  const groupedByCanonicalURL = new Map<string, Annotation[]>();
+  const keysToRemove: string[] = [];
 
-  const append = (url: string, annotationID?: string): void => {
+  for (const [key, value] of Object.entries(storageData)) {
+    if (!key.startsWith("annotations:") || !Array.isArray(value)) {
+      continue;
+    }
+
+    const rawURL = key.slice("annotations:".length).trim();
+    const canonicalURL = normalizeAnnotationURL(rawURL);
+    if (!canonicalURL) {
+      continue;
+    }
+
+    const normalizedItems: Annotation[] = (value as Annotation[])
+      .filter((item) => item && typeof item.id === "string" && item.id.trim() !== "")
+      .map((item) => ({
+        ...item,
+        url: canonicalURL
+      }));
+
+    const existing = groupedByCanonicalURL.get(canonicalURL) ?? [];
+    groupedByCanonicalURL.set(canonicalURL, [...existing, ...normalizedItems]);
+
+    if (rawURL !== canonicalURL) {
+      keysToRemove.push(key);
+    }
+  }
+
+  if (groupedByCanonicalURL.size === 0) {
+    return;
+  }
+
+  const nextStorage: Record<string, Annotation[]> = {};
+  for (const [url, items] of groupedByCanonicalURL.entries()) {
+    nextStorage[annotationStorageKey(url)] = mergeAnnotationsByID(items);
+  }
+
+  await chrome.storage.local.set(nextStorage);
+  if (keysToRemove.length > 0) {
+    await chrome.storage.local.remove(keysToRemove);
+  }
+};
+
+const ensureAnnotationURLMigration = async (): Promise<void> => {
+  if (annotationURLMigrationInFlight) {
+    await annotationURLMigrationInFlight;
+    return;
+  }
+  annotationURLMigrationInFlight = migrateAnnotationStorageURLKeys().finally(() => {
+    annotationURLMigrationInFlight = null;
+  });
+  await annotationURLMigrationInFlight;
+};
+
+type PendingSyncState = {
+  pendingAnnotationIDs: Set<string>;
+  pendingDeleteAnnotationIDs: Set<string>;
+};
+
+const listPendingSyncStateByURL = async (): Promise<Map<string, PendingSyncState>> => {
+  const [queue, conflicts] = await Promise.all([getSyncQueue(), getSyncConflicts()]);
+  const byURL = new Map<string, PendingSyncState>();
+
+  const ensureState = (url: string): PendingSyncState => {
+    const existing = byURL.get(url);
+    if (existing) {
+      return existing;
+    }
+    const created: PendingSyncState = {
+      pendingAnnotationIDs: new Set<string>(),
+      pendingDeleteAnnotationIDs: new Set<string>()
+    };
+    byURL.set(url, created);
+    return created;
+  };
+
+  const append = (url: string, opType: SyncQueueItem["opType"], annotationID?: string): void => {
+    const normalizedURL = normalizeAnnotationURL(url);
     const id = annotationID?.trim();
-    if (!url || !id) {
+    if (!normalizedURL || !id) {
       return;
     }
-    const set = byURL.get(url) ?? new Set<string>();
-    set.add(id);
-    byURL.set(url, set);
+    const state = ensureState(normalizedURL);
+    state.pendingAnnotationIDs.add(id);
+    if (opType === "delete") {
+      state.pendingDeleteAnnotationIDs.add(id);
+    }
   };
 
   for (const item of queue) {
-    append(item.url, item.annotationId);
+    append(item.url, item.opType, item.annotationId);
   }
   for (const item of conflicts) {
-    append(item.operation.url, item.operation.annotationId);
+    append(item.operation.url, item.operation.opType, item.operation.annotationId);
   }
 
   return byURL;
@@ -363,14 +497,25 @@ const listPendingAnnotationIDsByURL = async (): Promise<Map<string, Set<string>>
 const reconcileLocalWithRemote = (
   local: Annotation[],
   remote: Annotation[],
-  pendingAnnotationIDs: Set<string>
+  pendingState: PendingSyncState
 ): Annotation[] => {
   const result = new Map<string, Annotation>();
+  const pendingAnnotationIDs = pendingState.pendingAnnotationIDs;
+  const pendingDeleteAnnotationIDs = pendingState.pendingDeleteAnnotationIDs;
+
   for (const remoteItem of remote) {
+    if (pendingDeleteAnnotationIDs.has(remoteItem.id)) {
+      continue;
+    }
     result.set(remoteItem.id, remoteItem);
   }
 
   for (const localItem of local) {
+    if (pendingDeleteAnnotationIDs.has(localItem.id)) {
+      result.delete(localItem.id);
+      continue;
+    }
+
     if (!pendingAnnotationIDs.has(localItem.id)) {
       continue;
     }
@@ -1019,18 +1164,16 @@ const scheduleSync = (reason: string): void => {
 };
 
 const handleList = async (url: string): Promise<Annotation[]> => {
-  const config = await loadSyncConfig();
-  const remoteAnnotations = await listAnnotationsFromBackend(config, url);
-  if (remoteAnnotations) {
-    const [localAnnotations, pendingByURL] = await Promise.all([listAnnotations(url), listPendingAnnotationIDsByURL()]);
-    const reconciled = reconcileLocalWithRemote(localAnnotations, remoteAnnotations, pendingByURL.get(url) ?? new Set<string>());
-    await saveAnnotations(url, reconciled);
-    return reconciled;
+  await ensureAnnotationURLMigration();
+  const normalizedURL = normalizeAnnotationURL(url);
+  if (!normalizedURL) {
+    return [];
   }
-  return listAnnotations(url);
+  return listAnnotations(normalizedURL);
 };
 
 const hydrateLocalAnnotationsFromBackend = async (): Promise<void> => {
+  await ensureAnnotationURLMigration();
   const config = await loadSyncConfig();
   const remoteAnnotations = await listAnnotationsFromBackend(config);
   if (!remoteAnnotations) {
@@ -1044,13 +1187,16 @@ const hydrateLocalAnnotationsFromBackend = async (): Promise<void> => {
     groupedByURL.set(annotation.url, current);
   }
 
-  const [localURLs, pendingByURL] = await Promise.all([listLocalAnnotationURLs(), listPendingAnnotationIDsByURL()]);
+  const [localURLs, pendingByURL] = await Promise.all([listLocalAnnotationURLs(), listPendingSyncStateByURL()]);
   const allURLs = new Set<string>([...localURLs, ...Array.from(groupedByURL.keys())]);
 
   for (const url of allURLs) {
     const localItems = await listAnnotations(url);
     const remoteItems = groupedByURL.get(url) ?? [];
-    const reconciled = reconcileLocalWithRemote(localItems, remoteItems, pendingByURL.get(url) ?? new Set<string>());
+    const reconciled = reconcileLocalWithRemote(localItems, remoteItems, pendingByURL.get(url) ?? {
+      pendingAnnotationIDs: new Set<string>(),
+      pendingDeleteAnnotationIDs: new Set<string>()
+    });
     await saveAnnotations(url, reconciled);
   }
 };
@@ -1107,10 +1253,16 @@ const listAnnotationURLSummaries = async (): Promise<AnnotationURLSummaryRespons
 };
 
 const handleCreate = async (payload: AnnotationCreateInput): Promise<Annotation> => {
-  const annotations = await listAnnotations(payload.url);
-  const created = createAnnotation(payload);
+  await ensureAnnotationURLMigration();
+  const normalizedURL = normalizeAnnotationURL(payload.url);
+  const normalizedPayload: AnnotationCreateInput = {
+    ...payload,
+    url: normalizedURL
+  };
+  const annotations = await listAnnotations(normalizedURL);
+  const created = createAnnotation(normalizedPayload);
   annotations.push(created);
-  await saveAnnotations(payload.url, annotations);
+  await saveAnnotations(normalizedURL, annotations);
   const config = await loadSyncConfig();
   const remoteCreated = await createAnnotationOnBackend(config, created);
   if (!remoteCreated) {
@@ -1135,14 +1287,20 @@ const handleCreate = async (payload: AnnotationCreateInput): Promise<Annotation>
     await upsertAnnotation(remoteCreated);
   }
 
-  await emitChanged(payload.url);
+  await emitChanged(normalizedURL);
   return remoteCreated ?? created;
 };
 
 const handleUpdateComment = async (
   payload: AnnotationUpdateCommentInput
 ): Promise<Annotation | null> => {
-  const annotations = await listAnnotations(payload.url);
+  await ensureAnnotationURLMigration();
+  const normalizedURL = normalizeAnnotationURL(payload.url);
+  const normalizedPayload: AnnotationUpdateCommentInput = {
+    ...payload,
+    url: normalizedURL
+  };
+  const annotations = await listAnnotations(normalizedURL);
   const target = annotations.find((annotation) => annotation.id === payload.id);
   if (!target) {
     return null;
@@ -1154,20 +1312,20 @@ const handleUpdateComment = async (
   }
   target.version += 1;
   target.updatedAt = nowISO();
-  await saveAnnotations(payload.url, annotations);
-  await prunePendingUpdateOperations(payload.url, payload.id);
+  await saveAnnotations(normalizedURL, annotations);
+  await prunePendingUpdateOperations(normalizedURL, payload.id);
   let resultAnnotation: Annotation = { ...target };
   const config = await loadSyncConfig();
-  const remoteUpdateResult = await updateAnnotationCommentOnBackend(config, payload);
+  const remoteUpdateResult = await updateAnnotationCommentOnBackend(config, normalizedPayload);
   if (!remoteUpdateResult.annotation) {
     if (!remoteUpdateResult.shouldRetryFallback) {
-      await emitChanged(payload.url);
+      await emitChanged(normalizedURL);
       return resultAnnotation;
     }
     await enqueueOperation({
       opId: makeOperationID(),
       opType: "update_comment",
-      url: payload.url,
+      url: normalizedURL,
       annotationId: payload.id,
       color: payload.color,
       commentText: payload.commentText,
@@ -1192,35 +1350,41 @@ const handleUpdateComment = async (
     resultAnnotation = mergedRemoteUpdated;
   }
 
-  await emitChanged(payload.url);
+  await emitChanged(normalizedURL);
   return resultAnnotation;
 };
 
 const handleDelete = async (payload: AnnotationDeleteInput): Promise<boolean> => {
-  const annotations = await listAnnotations(payload.url);
+  await ensureAnnotationURLMigration();
+  const normalizedURL = normalizeAnnotationURL(payload.url);
+  const normalizedPayload: AnnotationDeleteInput = {
+    ...payload,
+    url: normalizedURL
+  };
+  const annotations = await listAnnotations(normalizedURL);
   const next = annotations.filter((annotation) => annotation.id !== payload.id);
   if (next.length === annotations.length) {
     return false;
   }
 
-  await saveAnnotations(payload.url, next);
+  await saveAnnotations(normalizedURL, next);
   await Promise.all([
-    prunePendingUpdateOperations(payload.url, payload.id),
-    prunePendingDeleteOperations(payload.url, payload.id)
+    prunePendingUpdateOperations(normalizedURL, payload.id),
+    prunePendingDeleteOperations(normalizedURL, payload.id)
   ]);
   const config = await loadSyncConfig();
-  const deletedOnBackend = await deleteAnnotationOnBackend(config, payload);
+  const deletedOnBackend = await deleteAnnotationOnBackend(config, normalizedPayload);
   await enqueueOperation({
     opId: makeOperationID(),
     opType: "delete",
-    url: payload.url,
+    url: normalizedURL,
     annotationId: payload.id,
     createdAt: nowISO(),
     lastError: ""
   });
   scheduleSync(deletedOnBackend ? "annotation-delete-sync-event" : "annotation-delete-fallback");
 
-  await emitChanged(payload.url);
+  await emitChanged(normalizedURL);
   return true;
 };
 
@@ -1260,7 +1424,9 @@ const getSyncState = async (url?: string): Promise<{
     chrome.storage.local.get([STORAGE_KEY.lastSyncAt, STORAGE_KEY.lastSyncError])
   ]);
 
-  const urlFilter = (value?: string): boolean => (url ? value === url : true);
+  const normalizedFilterURL = url ? normalizeAnnotationURL(url) : "";
+  const urlFilter = (value?: string): boolean =>
+    normalizedFilterURL ? normalizeAnnotationURL(value ?? "") === normalizedFilterURL : true;
   const pendingAnnotationIDs = Array.from(
     new Set(
       queue
