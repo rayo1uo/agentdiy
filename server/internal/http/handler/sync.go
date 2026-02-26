@@ -131,7 +131,10 @@ func (h SyncHandler) Push(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			deleteErr := h.annotationRepo.Delete(r.Context(), userID, url, annotationID)
-			if deleteErr != nil {
+			// Delete must be idempotent for cross-device convergence:
+			// if another device already removed this annotation, we still append
+			// a delete sync event so lagging devices can converge to "deleted".
+			if deleteErr != nil && !errors.Is(deleteErr, storage.ErrNotFound) {
 				processErr = deleteErr
 				break
 			}

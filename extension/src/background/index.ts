@@ -181,26 +181,8 @@ const shouldReplaceAnnotation = (current: Annotation, incoming: Annotation): boo
   return true;
 };
 
-const mergeAnnotations = (local: Annotation[], remote: Annotation[]): Annotation[] => {
-  const result = new Map<string, Annotation>();
-
-  for (const localItem of local) {
-    result.set(localItem.id, localItem);
-  }
-
-  for (const remoteItem of remote) {
-    const localItem = result.get(remoteItem.id);
-    if (!localItem) {
-      result.set(remoteItem.id, remoteItem);
-      continue;
-    }
-
-    if (shouldReplaceAnnotation(localItem, remoteItem)) {
-      result.set(remoteItem.id, remoteItem);
-    }
-  }
-
-  return Array.from(result.values()).sort((a, b) => {
+const sortAnnotationsByUpdatedAt = (items: Annotation[]): Annotation[] =>
+  items.sort((a, b) => {
     const bTime = parseTimestamp(b.updatedAt || b.createdAt);
     const aTime = parseTimestamp(a.updatedAt || a.createdAt);
     if (bTime !== aTime) {
@@ -208,7 +190,6 @@ const mergeAnnotations = (local: Annotation[], remote: Annotation[]): Annotation
     }
     return a.id.localeCompare(b.id);
   });
-};
 
 const upsertAnnotation = async (annotation: Annotation): Promise<void> => {
   const annotations = await listAnnotations(annotation.url);
@@ -228,6 +209,14 @@ const prunePendingUpdateOperations = async (url: string, annotationID: string): 
   const nextQueue = queue.filter(
     (item) => !(item.opType === "update_comment" && item.url === url && item.annotationId === annotationID)
   );
+  if (nextQueue.length !== queue.length) {
+    await saveSyncQueue(nextQueue);
+  }
+};
+
+const prunePendingDeleteOperations = async (url: string, annotationID: string): Promise<void> => {
+  const queue = await getSyncQueue();
+  const nextQueue = queue.filter((item) => !(item.opType === "delete" && item.url === url && item.annotationId === annotationID));
   if (nextQueue.length !== queue.length) {
     await saveSyncQueue(nextQueue);
   }
@@ -329,6 +318,70 @@ const getSyncCursor = async (): Promise<number> => {
 
 const setSyncCursor = async (cursor: number): Promise<void> => {
   await chrome.storage.local.set({ [STORAGE_KEY.cursor]: cursor });
+};
+
+const listLocalAnnotationURLs = async (): Promise<string[]> => {
+  const storageData = await chrome.storage.local.get(null);
+  const urls: string[] = [];
+  for (const key of Object.keys(storageData)) {
+    if (!key.startsWith("annotations:")) {
+      continue;
+    }
+    const url = key.slice("annotations:".length).trim();
+    if (!url) {
+      continue;
+    }
+    urls.push(url);
+  }
+  return urls;
+};
+
+const listPendingAnnotationIDsByURL = async (): Promise<Map<string, Set<string>>> => {
+  const [queue, conflicts] = await Promise.all([getSyncQueue(), getSyncConflicts()]);
+  const byURL = new Map<string, Set<string>>();
+
+  const append = (url: string, annotationID?: string): void => {
+    const id = annotationID?.trim();
+    if (!url || !id) {
+      return;
+    }
+    const set = byURL.get(url) ?? new Set<string>();
+    set.add(id);
+    byURL.set(url, set);
+  };
+
+  for (const item of queue) {
+    append(item.url, item.annotationId);
+  }
+  for (const item of conflicts) {
+    append(item.operation.url, item.operation.annotationId);
+  }
+
+  return byURL;
+};
+
+const reconcileLocalWithRemote = (
+  local: Annotation[],
+  remote: Annotation[],
+  pendingAnnotationIDs: Set<string>
+): Annotation[] => {
+  const result = new Map<string, Annotation>();
+  for (const remoteItem of remote) {
+    result.set(remoteItem.id, remoteItem);
+  }
+
+  for (const localItem of local) {
+    if (!pendingAnnotationIDs.has(localItem.id)) {
+      continue;
+    }
+
+    const remoteItem = result.get(localItem.id);
+    if (!remoteItem || shouldReplaceAnnotation(remoteItem, localItem)) {
+      result.set(localItem.id, localItem);
+    }
+  }
+
+  return sortAnnotationsByUpdatedAt(Array.from(result.values()));
 };
 
 const getOrCreateDeviceID = async (): Promise<string> => {
@@ -966,15 +1019,15 @@ const scheduleSync = (reason: string): void => {
 };
 
 const handleList = async (url: string): Promise<Annotation[]> => {
-  const localAnnotations = await listAnnotations(url);
   const config = await loadSyncConfig();
   const remoteAnnotations = await listAnnotationsFromBackend(config, url);
   if (remoteAnnotations) {
-    const merged = mergeAnnotations(localAnnotations, remoteAnnotations);
-    await saveAnnotations(url, merged);
-    return merged;
+    const [localAnnotations, pendingByURL] = await Promise.all([listAnnotations(url), listPendingAnnotationIDsByURL()]);
+    const reconciled = reconcileLocalWithRemote(localAnnotations, remoteAnnotations, pendingByURL.get(url) ?? new Set<string>());
+    await saveAnnotations(url, reconciled);
+    return reconciled;
   }
-  return localAnnotations;
+  return listAnnotations(url);
 };
 
 const hydrateLocalAnnotationsFromBackend = async (): Promise<void> => {
@@ -991,10 +1044,14 @@ const hydrateLocalAnnotationsFromBackend = async (): Promise<void> => {
     groupedByURL.set(annotation.url, current);
   }
 
-  for (const [url, remoteItems] of groupedByURL.entries()) {
+  const [localURLs, pendingByURL] = await Promise.all([listLocalAnnotationURLs(), listPendingAnnotationIDsByURL()]);
+  const allURLs = new Set<string>([...localURLs, ...Array.from(groupedByURL.keys())]);
+
+  for (const url of allURLs) {
     const localItems = await listAnnotations(url);
-    const merged = mergeAnnotations(localItems, remoteItems);
-    await saveAnnotations(url, merged);
+    const remoteItems = groupedByURL.get(url) ?? [];
+    const reconciled = reconcileLocalWithRemote(localItems, remoteItems, pendingByURL.get(url) ?? new Set<string>());
+    await saveAnnotations(url, reconciled);
   }
 };
 
@@ -1147,19 +1204,21 @@ const handleDelete = async (payload: AnnotationDeleteInput): Promise<boolean> =>
   }
 
   await saveAnnotations(payload.url, next);
+  await Promise.all([
+    prunePendingUpdateOperations(payload.url, payload.id),
+    prunePendingDeleteOperations(payload.url, payload.id)
+  ]);
   const config = await loadSyncConfig();
   const deletedOnBackend = await deleteAnnotationOnBackend(config, payload);
-  if (!deletedOnBackend) {
-    await enqueueOperation({
-      opId: makeOperationID(),
-      opType: "delete",
-      url: payload.url,
-      annotationId: payload.id,
-      createdAt: nowISO(),
-      lastError: ""
-    });
-    scheduleSync("annotation-delete-fallback");
-  }
+  await enqueueOperation({
+    opId: makeOperationID(),
+    opType: "delete",
+    url: payload.url,
+    annotationId: payload.id,
+    createdAt: nowISO(),
+    lastError: ""
+  });
+  scheduleSync(deletedOnBackend ? "annotation-delete-sync-event" : "annotation-delete-fallback");
 
   await emitChanged(payload.url);
   return true;

@@ -368,7 +368,7 @@ func TestSyncMultiDeviceConvergence(t *testing.T) {
 		t.Fatalf("unexpected delete event: %+v", macPullDeleteResp.Events[0])
 	}
 
-	// Step 7: deleting again should conflict, proving convergence to deleted state.
+	// Step 7: deleting again should be idempotent success.
 	redeletePush := pushRequest(t, syncHandler, accessToken, map[string]any{
 		"device_id": macDevice,
 		"platform":  "mac",
@@ -388,10 +388,10 @@ func TestSyncMultiDeviceConvergence(t *testing.T) {
 	if err := json.Unmarshal(redeletePush.Body.Bytes(), &redeleteResp); err != nil {
 		t.Fatalf("unmarshal redelete response: %v", err)
 	}
-	if redeleteResp.Accepted != 0 {
-		t.Fatalf("expected redelete accepted=0, got %d", redeleteResp.Accepted)
+	if redeleteResp.Accepted != 1 {
+		t.Fatalf("expected redelete accepted=1, got %d", redeleteResp.Accepted)
 	}
-	if len(redeleteResp.Conflicts) == 0 {
-		t.Fatalf("expected conflict for redelete operation")
+	if len(redeleteResp.Conflicts) != 0 {
+		t.Fatalf("expected no conflict for idempotent redelete, got %d", len(redeleteResp.Conflicts))
 	}
 }
