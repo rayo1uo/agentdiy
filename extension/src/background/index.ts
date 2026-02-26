@@ -1169,6 +1169,20 @@ const handleList = async (url: string): Promise<Annotation[]> => {
   if (!normalizedURL) {
     return [];
   }
+  const config = await loadSyncConfig();
+  const remoteAnnotations = await listAnnotationsFromBackend(config, normalizedURL);
+  if (remoteAnnotations) {
+    const [localAnnotations, pendingByURL] = await Promise.all([
+      listAnnotations(normalizedURL),
+      listPendingSyncStateByURL()
+    ]);
+    const reconciled = reconcileLocalWithRemote(localAnnotations, remoteAnnotations, pendingByURL.get(normalizedURL) ?? {
+      pendingAnnotationIDs: new Set<string>(),
+      pendingDeleteAnnotationIDs: new Set<string>()
+    });
+    await saveAnnotations(normalizedURL, reconciled);
+    return reconciled;
+  }
   return listAnnotations(normalizedURL);
 };
 
